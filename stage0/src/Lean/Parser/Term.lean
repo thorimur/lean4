@@ -179,12 +179,15 @@ def structInstField  := ppGroup $ leading_parser
 def structInstFieldAbbrev := leading_parser
   -- `x` is an abbreviation for `x := x`
   atomic (ident >> notFollowedBy ("." <|> ":=" <|> symbol "[") "invalid field abbreviation")
-def optEllipsis      := leading_parser
-  optional ".."
+def vHdd                  := leading_parser ".."
+def vH?dd                 := leading_parser "?.." >> (optional ident)
+def vH?dd!                := leading_parser "?..!" >> (optional ident)
+def variadicHole          := leading_parser vHdd <|> vH?dd <|> vH?dd!
+def optVariadicHole       := leading_parser optional variadicHole
 /--
 Structure instance. `{ x := e, ... }` assigns `e` to field `x`, which may be
 inherited. If `e` is itself a variable called `x`, it can be elided:
-`fun y => { x := 1, y }`.
+`fun x => { x, y := 1 }`.
 A *structure update* of an existing value can be given via `with`:
 `{ point with x := 1 }`.
 The structure type can be specified if not inferable:
@@ -193,7 +196,7 @@ The structure type can be specified if not inferable:
 @[builtin_term_parser] def structInst := leading_parser
   "{" >> withoutPosition (ppHardSpace >> optional (atomic (sepBy1 termParser ", " >> " with "))
     >> sepByIndent (structInstFieldAbbrev <|> structInstField) ", " (allowTrailingSep := true)
-    >> optEllipsis
+    >> optVariadicHole
     >> optional (" : " >> termParser)) >> " }"
 def typeSpec := leading_parser " : " >> termParser
 def optType : Parser := optional typeSpec

@@ -182,10 +182,8 @@ def structInstFieldAbbrev := leading_parser
 def vHdd                  := leading_parser ".."
 def vH?dd                 := leading_parser "?.." >> (optional ident)
 def vH?dd!                := leading_parser "?..!" >> (optional ident)
-def variadicHole          := leading_parser
-  vHdd <|> vH?dd <|> vH?dd!
-def optVariadicHole       := leading_parser
-  optional variadicHole
+def variadicHole          := leading_parser vHdd <|> vH?dd <|> vH?dd!
+def optVariadicHole       := leading_parser optional variadicHole
 /--
 Structure instance. `{ x := e, ... }` assigns `e` to field `x`, which may be
 inherited. If `e` is itself a variable called `x`, it can be elided:
