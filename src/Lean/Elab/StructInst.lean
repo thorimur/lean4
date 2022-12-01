@@ -275,6 +275,24 @@ namespace Lean.Elab.Term.StructInst --!!
 open Meta
 open TSyntax.Compat
 
+def vHdd                  := leading_parser ".."
+def vH?dd                 := leading_parser "?.." >> (Parser.optional Parser.Term.ident)
+def vH?dd!                := leading_parser "?..!" >> (Parser.optional Parser.Term.ident)
+def variadicHole          := leading_parser vHdd <|> vH?dd <|> vH?dd!
+def optVariadicHole       := leading_parser Parser.optional variadicHole
+@[term_parser] def testnode := leading_parser "testing00" >> optVariadicHole >> "done"
+
+@[macro testnode] def expandtest : Macro
+| `(testing00 $[..%$ell]? done) => `(testing00 ?.. done)
+| _ => Macro.throwUnsupported
+
+@[term_elab Lean.Elab.Term.StructInst.testnode] def elabtest : TermElab := fun stx _ => do
+  match stx with
+  | `(testing00 ?.. done) => mkConst ``true
+  | _ => mkConst ``false
+
+#eval testing00 .. done
+
 --!! All instances of "missing" used to be "default", except in function names
 --!! `allDefault` was changed to `allMissing`.
 
@@ -294,17 +312,16 @@ open TSyntax.Compat
 
 --!! changed for WithHoles; would use $[$ell:variadicHole]? if built-in
 /-- Expand field abbreviations. Example: `{ x, y := 0 }` expands to `{ x := x, y := 0 }` -/
-@[builtin_macro Lean.Parser.Term.structInst] def expandStructInstFieldAbbrev : Macro
-| `({ $[$srcs,* with]? $fields,* $[$ell:variadicHole]? $[: $ty]? }) =>
+@[builtin_macro Lean.Parser.Term.structInst] def expandStructInstFieldAbbrev : Macro := fun stx =>
+  let fields := stx[2]
     if fields.getElems.raw.any (·.getKind == ``Lean.Parser.Term.structInstFieldAbbrev) then do
       let fieldsNew ← fields.getElems.mapM fun
         | `(Parser.Term.structInstFieldAbbrev| $id:ident) =>
           `(Parser.Term.structInstField| $id:ident := $id:ident)
         | field => return field
-      `({ $[$srcs,* with]? $fieldsNew,* $[$ell]? $[: $ty]? })
+      stx.setArg 2 fieldsNew
     else
       Macro.throwUnsupported
-| _ => Macro.throwUnsupported
 
 /--
   If `stx` is of the form `{ s₁, ..., sₙ with ... }` and `sᵢ` is not a local variable, expand into
