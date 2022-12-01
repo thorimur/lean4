@@ -364,6 +364,7 @@ structure ExplicitSourceInfo where
 --   /-- Whether defaults should attempt to be synthesized before filling fields with holes. -/
 --   useDefaults : Bool
 --   deriving Inhabited, Repr
+
 inductive VariadicHoleConfig : Type where
 |  mk : Syntax → Bool → Bool → Option Name → VariadicHoleConfig
 deriving Inhabited
@@ -379,9 +380,6 @@ def VariadicHoleConfig.useDefaults : VariadicHoleConfig → Bool
 
 def VariadicHoleConfig.name : VariadicHoleConfig → Option Name
 | ⟨_,_,_,n⟩ => n
-
-def VariadicHoleConfig.isDotDot : VariadicHoleConfig → Bool
-| ⟨_,s,u,_⟩ => ! (s || u)
 --!!\
 
 /--
