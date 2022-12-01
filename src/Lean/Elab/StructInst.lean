@@ -395,43 +395,6 @@ structure Source where
   implicit : Option VariadicHoleConfig --!!
   deriving Inhabited
 
-set_option trace.Elab.struct true
-set_option pp.rawOnError true
-#eval fun explicit implicit => { explicit, implicit : Source}
-
-open Lean.Parser.Term Parser in
-@[term_parser] def testing00 := leading_parser
-  "w<" >> withoutPosition (ppHardSpace >> Parser.optional (atomic (sepBy1 termParser ", " >> " with "))
-    >> sepByIndent (structInstFieldAbbrev <|> structInstField) ", " (allowTrailingSep := true)
-    >> optVariadicHole
-    >> Parser.optional (" : " >> termParser)) >> " >:>"
-
-@[macro testing00] def expandStructInstFieldAbbrev00 : Macro := fun stx =>
-  let fields := stx[2]
-    if fields.getSepArgs.any (·.getKind == ``Lean.Parser.Term.structInstFieldAbbrev) then do
-      let fieldsNew ← fields.getSepArgs.mapM fun
-        | `(Parser.Term.structInstFieldAbbrev| $id:ident) =>
-          `(Parser.Term.structInstField| $id:ident := $id:ident)
-        | field => return field
-      return stx.setArg 2 (Syntax.node (SourceInfo.fromRef fields) fields.getKind (mkSepArray fieldsNew (mkAtom ",")))
-    else
-      Macro.throwUnsupported
-
-@[term_elab testing00] def elabtest : TermElab := fun stx _ => do
-trace[Elab.struct] "{stx[2].getKind}"
-trace[Elab.struct] "{stx[2].getArgs.map (·.getKind)}"
-trace[Elab.struct] "{stx[2].getSepArgs}"
-trace[Elab.struct] "{stx}"
-match stx with
-| `(w< $[$srcs?,* with]? $fields,* $[..%$ell?]? $[: $ty?]? >:>) => mkConst ``true
-| _ => mkConst ``false
-
-set_option trace.Elab.struct true
-set_option pp.rawOnError true
-#eval w< true with x := true, y, y := r, ?.. >:>
-
-
-
 /-- Check if neither an explicit nor an implicit source has been specified. -/
 def Source.isNone : Source → Bool
   | { explicit := #[], implicit := none } => true
