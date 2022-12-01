@@ -305,6 +305,7 @@ open TSyntax.Compat
     else
       Macro.throwUnsupported
 
+
 /--
   If `stx` is of the form `{ s₁, ..., sₙ with ... }` and `sᵢ` is not a local variable, expand into
   `let src := sᵢ; { ..., src, ... with ... }`.
@@ -353,19 +354,35 @@ structure ExplicitSourceInfo where
   Information deduced from variadic hole syntax, as well as the raw
   syntax itself and any identifiers that were found.
 -/
-structure VariadicHoleConfig where
-  /-- The raw variadic hole syntax encountered (`?..`, `..`, etc.)-/
-  stx         : Syntax
-  /-- An optional name `x` found in `?..x` or `?..!x`, to be used as a prefix. -/
-  name        : Option Name
-  /-- Whether the holes should be synthetic and automatically named. -/
-  isSynthetic : Bool
-  /-- Whether defaults should attempt to be synthesized before filling fields with holes. -/
-  useDefaults : Bool
-  deriving Inhabited, Repr
---!!\
-structure Foo where x : Nat
+-- structure VariadicHoleConfig where
+--   /-- The raw variadic hole syntax encountered (`?..`, `..`, etc.)-/
+--   stx         : Syntax
+--   /-- An optional name `x` found in `?..x` or `?..!x`, to be used as a prefix. -/
+--   name        : Option Name
+--   /-- Whether the holes should be synthetic and automatically named. -/
+--   isSynthetic : Bool
+--   /-- Whether defaults should attempt to be synthesized before filling fields with holes. -/
+--   useDefaults : Bool
+--   deriving Inhabited, Repr
+inductive VariadicHoleConfig : Type where
+|  mk : Syntax → Bool → Bool → Option Name → VariadicHoleConfig
+deriving Inhabited
 
+def VariadicHoleConfig.stx : VariadicHoleConfig → Syntax
+| ⟨s,_,_,_⟩ => s
+
+def VariadicHoleConfig.isSynthetic : VariadicHoleConfig → Bool
+| ⟨_,s,_,_⟩ => s
+
+def VariadicHoleConfig.useDefaults : VariadicHoleConfig → Bool
+| ⟨_,_,u,_⟩ => u
+
+def VariadicHoleConfig.name : VariadicHoleConfig → Option Name
+| ⟨_,_,_,n⟩ => n
+
+def VariadicHoleConfig.isDotDot : VariadicHoleConfig → Bool
+| ⟨_,s,u,_⟩ => ! (s || u)
+--!!\
 
 /--
   Information on other sources of field values via structure update syntax or variadic holes.
@@ -380,6 +397,43 @@ structure Source where
   implicit : Option VariadicHoleConfig --!!
   deriving Inhabited
 
+set_option trace.Elab.struct true
+set_option pp.rawOnError true
+#eval fun explicit implicit => { explicit, implicit : Source}
+
+open Lean.Parser.Term Parser in
+@[term_parser] def testing00 := leading_parser
+  "w<" >> withoutPosition (ppHardSpace >> Parser.optional (atomic (sepBy1 termParser ", " >> " with "))
+    >> sepByIndent (structInstFieldAbbrev <|> structInstField) ", " (allowTrailingSep := true)
+    >> optVariadicHole
+    >> Parser.optional (" : " >> termParser)) >> " >:>"
+
+@[macro testing00] def expandStructInstFieldAbbrev00 : Macro := fun stx =>
+  let fields := stx[2]
+    if fields.getSepArgs.any (·.getKind == ``Lean.Parser.Term.structInstFieldAbbrev) then do
+      let fieldsNew ← fields.getSepArgs.mapM fun
+        | `(Parser.Term.structInstFieldAbbrev| $id:ident) =>
+          `(Parser.Term.structInstField| $id:ident := $id:ident)
+        | field => return field
+      return stx.setArg 2 (Syntax.node (SourceInfo.fromRef fields) fields.getKind (mkSepArray fieldsNew (mkAtom ",")))
+    else
+      Macro.throwUnsupported
+
+@[term_elab testing00] def elabtest : TermElab := fun stx _ => do
+trace[Elab.struct] "{stx[2].getKind}"
+trace[Elab.struct] "{stx[2].getArgs.map (·.getKind)}"
+trace[Elab.struct] "{stx[2].getSepArgs}"
+trace[Elab.struct] "{stx}"
+match stx with
+| `(w< $[$srcs?,* with]? $fields,* $[..%$ell?]? $[: $ty?]? >:>) => mkConst ``true
+| _ => mkConst ``false
+
+set_option trace.Elab.struct true
+set_option pp.rawOnError true
+#eval w< true with x := true, y, y := r, ?.. >:>
+
+
+
 /-- Check if neither an explicit nor an implicit source has been specified. -/
 def Source.isNone : Source → Bool
   | { explicit := #[], implicit := none } => true
@@ -390,11 +444,11 @@ def Source.isNone : Source → Bool
 def getVariadicHoleConfig? : TSyntax ``Lean.Parser.Term.variadicHole → Option VariadicHoleConfig
 | stx => match stx with
   | `(Parser.Term.variadicHole|..) => some
-    {stx, isSynthetic := false, useDefaults := false, name := none}
+    ⟨stx, false, false, none⟩
   | `(Parser.Term.variadicHole|?..$[$x:ident]?) => some
-    {stx, isSynthetic := true, useDefaults := true, name := x.map Syntax.getId}
+    ⟨stx, true, true, x.map Syntax.getId⟩
   | `(Parser.Term.variadicHole|?..!$[$x:ident]?) => some
-    {stx, isSynthetic := true, useDefaults := false, name := x.map Syntax.getId}
+    ⟨stx, true, false, x.map Syntax.getId⟩
   /-~~! Removed for now.
   | `(variadicHole|...) => some
     {stx, isSynthetic := false, useDefaults := true}
@@ -955,7 +1009,8 @@ mutual
               --!!/ Use hole syntax as a term in the natural, no-defaults (..) case;
               --    otherwise mark it as a missing field.
               match s.source.implicit with
-              | some { isSynthetic := false, useDefaults := false, .. } =>
+              | some ⟨_,false,false,_⟩ =>
+                trace[Elab.struct] "using blanks for missing fields"
                 addField (FieldVal.term (mkHole ref))
               | _ => addField FieldVal.missing
               --!!\
@@ -1337,6 +1392,11 @@ structure FieldHoleMData where
       to be prefixed. -/
   prefixName : Name
 
+/-- Gets the name from a vhc if there is one; otherwise gives an anonymous name. -/
+def getPrefixName : Option VariadicHoleConfig → Name
+| some ⟨_,_,_, some p⟩ => p
+| _                    => Name.anonymous
+
 /-- Creates the metadata for a field's named goal given the field, the `Struct`, and the
     conflict-resolution index. -/
 def mkFieldHoleMData (index : Nat) (field : Field Struct) (struct : Struct) : FieldHoleMData :=
@@ -1345,9 +1405,7 @@ def mkFieldHoleMData (index : Nat) (field : Field Struct) (struct : Struct) : Fi
     structRef  := struct.ref
     structName := struct.structName
     fieldName  := getFieldName field
-    prefixName := match struct.source.implicit with
-                  | some {name := some prefixName, ..} => prefixName
-                  | _ => Name.anonymous
+    prefixName := getPrefixName struct.source.implicit
   }
 
 open KVMap in
@@ -1470,9 +1528,7 @@ def getConflictingIndex? (env : Environment) (s : Struct) (prefixName : Name) (d
     like two goals are from the same occurrence of `?..` despite this not being the case. -/
 def nextIndexGivenCollisions (env : Environment) (mctx : MetavarContext) (s : Struct)
 : TermElabM Nat := do
-  let prefixName := match s.source.implicit with
-  | some { name := some prefixName, .. } => prefixName
-  | _ => Name.anonymous
+  let prefixName := getPrefixName s.source.implicit
   let conflictingIndex : (Option Nat) ← mctx.decls.foldl
     (fun i? _ decl => do
       let i'? ← getConflictingIndex? env s prefixName decl
