@@ -319,7 +319,7 @@ def optVariadicHole       := leading_parser Parser.optional variadicHole
         | `(Parser.Term.structInstFieldAbbrev| $id:ident) =>
           `(Parser.Term.structInstField| $id:ident := $id:ident)
         | field => return field
-      stx.setArg 2 fieldsNew
+      return stx.setArg 2 fieldsNew
     else
       Macro.throwUnsupported
 
