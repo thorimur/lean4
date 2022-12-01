@@ -301,7 +301,7 @@ open TSyntax.Compat
         | `(Parser.Term.structInstFieldAbbrev| $id:ident) =>
           `(Parser.Term.structInstField| $id:ident := $id:ident)
         | field => return field
-      pure <| stx.setArg 2 (Syntax.node (SourceInfo.fromRef fields) (Syntax.getKind fields) fieldsNew)
+      return stx.setArg 2 (Syntax.node (SourceInfo.fromRef fields) fields.getKind (mkSepArray fieldsNew (mkAtom ",")))
     else
       Macro.throwUnsupported
 
@@ -364,6 +364,8 @@ structure VariadicHoleConfig where
   useDefaults : Bool
   deriving Inhabited, Repr
 --!!\
+structure Foo where x : Nat
+
 
 /--
   Information on other sources of field values via structure update syntax or variadic holes.
