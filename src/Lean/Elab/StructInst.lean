@@ -515,8 +515,6 @@ mutual
           | none =>
             if let some val ← s.source.explicit.findSomeM? fun source => mkProjStx? source.stx source.structName fieldName then
               addField (FieldVal.term val)
-            else if s.source.implicit.isSome then
-              addField (FieldVal.term (mkHole ref))
             else
               addField FieldVal.default
       return s.setFields fields.reverse
@@ -850,15 +848,18 @@ partial def propagateLoop (hierarchyDepth : Nat) (d : Nat) (struct : Struct) : M
   | some field =>
     trace[Elab.struct] "propagate [{d}] [field := {field}]: {struct}"
     if d > hierarchyDepth then
-      let missingFields := (← allDefaultMissing struct).map getFieldName
-      let missingFieldsWithoutDefault :=
-        let env := (← getEnv)
-        let structs := (← read).allStructNames
-        missingFields.filter fun fieldName => structs.all fun struct =>
-          (getDefaultFnForField? env struct fieldName).isNone
-      let fieldsToReport :=
-        if missingFieldsWithoutDefault.isEmpty then missingFields else missingFieldsWithoutDefault
-      throwErrorAt field.ref "fields missing: {fieldsToReport.toList.map (s!"'{·}'") |> ", ".intercalate}"
+      if struct.source.implicit.isSome then
+        return ()
+      else
+        let missingFields := (← allDefaultMissing struct).map getFieldName
+        let missingFieldsWithoutDefault :=
+          let env := (← getEnv)
+          let structs := (← read).allStructNames
+          missingFields.filter fun fieldName => structs.all fun struct =>
+            (getDefaultFnForField? env struct fieldName).isNone
+        let fieldsToReport :=
+          if missingFieldsWithoutDefault.isEmpty then missingFields else missingFieldsWithoutDefault
+        throwErrorAt field.ref "fields missing: {fieldsToReport.toList.map (s!"'{·}'") |> ", ".intercalate}"
     else withReader (fun ctx => { ctx with maxDistance := d }) do
       modify fun _ => { progress := false }
       step struct
