@@ -515,6 +515,8 @@ mutual
           | none =>
             if let some val ← s.source.explicit.findSomeM? fun source => mkProjStx? source.stx source.structName fieldName then
               addField (FieldVal.term val)
+            else if (← read).inPattern && s.source.implicit.isSome then
+              addField (FieldVal.term (mkHole ref))
             else
               addField FieldVal.default
       return s.setFields fields.reverse
@@ -606,31 +608,40 @@ private partial def elabStruct (s : Struct) (expectedType? : Option Expr) : Term
       trace[Elab.struct] "elabStruct {field}, {type}"
       match type with
       | .forallE _ d b bi =>
-        let cont (val : Expr) (field : Field Struct) (instMVars := instMVars) : TermElabM (Expr × Expr × Fields × Array MVarId) := do
+        let cont (val : Expr) (field : Field Struct) (instMVars := instMVars) (updateField := true) : TermElabM (Expr × Expr × Fields × Array MVarId) := do
           pushInfoTree <| InfoTree.node (children := {}) <| Info.ofFieldInfo {
             projName := s.structName.append fieldName, fieldName, lctx := (← getLCtx), val, stx := ref }
           let e     := mkApp e val
           let type  := b.instantiate1 val
-          let field := { field with expr? := some val }
+          let field := if updateField then { field with expr? := some val } else field
           return (e, type, field::fields, instMVars)
         match field.val with
         | .term stx => cont (← elabTermEnsuringType stx d.consumeTypeAnnotations) field
         | .nested s =>
           -- if all fields of `s` are marked as `default`, then try to synthesize instance
+          -- ok because fields only get marked with a `.default` FieldVal if not in a pattern
           match (← trySynthStructInstance? s d) with
           | some val => cont val { field with val := FieldVal.term (mkHole field.ref) }
           | none     =>
             let { val, struct := sNew, instMVars := instMVarsNew } ← elabStruct s (some d)
             let val ← ensureHasType d val
             cont val { field with val := FieldVal.nested sNew } (instMVars ++ instMVarsNew)
-        | .default  =>
+        | .default  => -- recall that we can assume we're not in a pattern here, and thus are synthesizing as many defaults as possible
           match d.getAutoParamTactic? with
           | some (.const tacticDecl ..) =>
+            let d := (d.getArg! 0).consumeTypeAnnotations
             match evalSyntaxConstant env (← getOptions) tacticDecl with
             | .error err       => throwError err
             | .ok tacticSyntax =>
-              let stx ← `(by $tacticSyntax)
-              cont (← elabTermEnsuringType stx (d.getArg! 0).consumeTypeAnnotations) field
+              if s.source.implicit.isSome then
+                let val := (← mkFreshExprMVar (some d) .synthetic)
+                let stx ← `(by first | $tacticSyntax | exact $(← exprToSyntax val (some d)))
+                cont (← elabTermEnsuringType stx d)
+                  {field with expr? := some (markDefaultMissing val)}
+                  (updateField := false)
+              else
+                let stx ← `(by $tacticSyntax)
+                cont (← elabTermEnsuringType stx d) field
           | _ =>
             if bi == .instImplicit then
               let val ← withRef field.ref <| mkFreshExprMVar d .synthetic
@@ -731,6 +742,194 @@ def getFieldValue? (struct : Struct) (fieldName : Name) : Option Expr :=
       field.expr?
     else
       none
+
+section NamedGoalsWithMetadata
+/-- A convenient representation of the metadata attached to named goals produced by `?..` syntax. -/
+structure FieldHoleMData where
+  /-- The index of the named goal used for name conflict resolution when dealing with multiple
+      occcurrences of `?..`. Each conflicting use of `?..` should generate field holes with
+      different indices. An index of `0` indicates that no name conflicts were found with any
+      existing goals. -/
+  index      : Nat
+  /-- The syntax of the structure instance that contained the `?..` syntax. -/
+  structRef  : Syntax
+  /-- The name of the structure that contained the `?..` syntax. -/
+  structName : Name
+  /-- The name of the field this goal represents. -/
+  fieldName  : Name
+  -- /-- The name to be prefixed to the name of this goal. `Name.anonymous` indicates that no name is
+  --     to be prefixed. -/
+  -- prefixName : Name
+
+/-- Creates the metadata for a field's named goal given the field, the `Struct`, and the
+    conflict-resolution index. -/
+def mkFieldHoleMData (index : Nat) (field : Field Struct) (struct : Struct) : FieldHoleMData :=
+  {
+    index,
+    structRef  := struct.ref
+    structName := struct.structName
+    fieldName  := getFieldName field
+    -- prefixName := match struct.source.implicit with
+    --               | some {name := some prefixName, ..} => prefixName
+    --               | _ => Name.anonymous
+  }
+
+open KVMap in
+/-- Gets the field hole metadata from a metavariable if present. -/
+def getFieldHoleMDataFromMVar? (decl : MetavarDecl) : Option FieldHoleMData :=
+  match decl.type with
+  | .mdata md _ =>
+    if getBool md `fieldHole then
+      some
+      {
+        index      := getNat md `index
+        structRef  := getSyntax md `structRef
+        structName := getName md `structName
+        fieldName  := getName md `fieldName
+        -- prefixName := getName md `prefixName
+      }
+    else none
+  | _ => none
+
+/-- Checks if a metavariable decl is a named field hole created by `?..` syntax. -/
+def isFieldHole (decl : MetavarDecl) : Bool :=
+  match decl.type with
+  | .mdata md _ => KVMap.getBool md `fieldHole
+  | _           => false
+
+section KVMap
+/-- Merges two `KVMap`s, overwriting the values of any shared keys with those in the second `KVMap`
+    -/
+def mergeKVMap : KVMap → KVMap → KVMap :=
+  fun m₀ m₁ => Id.run do
+    let mut m := m₀
+    for (name, data) in m₁ do
+      m := KVMap.insert m name data
+    return m
+
+/-- Turns a list of key-value pairs (e.g. ``[(`a, ofBool true), (`b, ofNat 2), ...]``) into a
+    `KVMap`. -/
+def toKVMap : List (Name × DataValue) → KVMap
+| l => l.foldl (fun m (n, d) => KVMap.insert m n d) {}
+
+end KVMap
+
+open DataValue in
+/-- Turns a representation of field hole metadata into actual metadata (a `KVMap`). -/
+def mkFieldHoleMDataKVMap (f : FieldHoleMData) : KVMap :=
+  toKVMap [
+    (`fieldHole  , ofBool   true        ),
+    (`index      , ofNat    f.index     ),
+    (`structRef  , ofSyntax f.structRef ),
+    (`structName , ofName   f.structName),
+    (`fieldName  , ofName   f.fieldName )/- ,
+    (`prefixName , ofName   f.prefixName)-/
+  ]
+
+/--
+  Create a metavariable with `metadata` attached to its `type`.
+  If there's any existing metadata on `type`, `metadata` is preferentially merged into it.
+  -/
+def mkFreshExprMVarWithMData (type : Expr) (metadata : KVMap) (kind : MetavarKind := default)
+(userName := Name.anonymous) : MetaM Expr :=
+  let annotatedType :=
+    match type with
+    | .mdata m e =>
+      let merge := mergeKVMap m metadata
+      Expr.mdata merge e
+    | _          =>
+      Expr.mdata metadata type
+  mkFreshExprMVar annotatedType (kind := kind) (userName := userName)
+
+/-- Make a fresh expression metavariable for a field, named accordingly, and with metadata
+    attached. -/
+def mkFreshFieldNamedMVar (type : Expr) (index : Nat) /-(prefixName : Option Name)-/
+(field : Field Struct) (struct : Struct) : MetaM Expr :=
+  let fieldHoleMData := mkFieldHoleMDataKVMap <| mkFieldHoleMData index field struct
+  let name := getFieldName field
+    -- match prefixName with
+    -- | some x => x ++ (getFieldName field)
+    -- | none   => getFieldName field
+  let name := if index == 0 then name else name.appendIndexAfter index
+  mkFreshExprMVarWithMData type fieldHoleMData (kind := .syntheticOpaque) (userName := name)
+
+/-- Given the names of two structures, check if they have any field names in common. -/
+def fieldsOverlap (env : Environment) (structName₀ : Name) (structName₁ : Name) : Bool :=
+  let fields₀ := getStructureFieldsFlattened env structName₀ false
+  let fields₁ := getStructureFieldsFlattened env structName₁ false
+  fields₀.any (fun field => fields₁.contains field)
+
+-- Monadic to enable tracing.
+/-- If the provided metavariable decl is a named field hole created by `?..` syntax, check if it
+    conflicts with the current structure and prefix name. If so, return its index. Otherwise,
+    return `none`. -/
+def getConflictingIndex? (env : Environment) (s : Struct) /-(prefixName : Name)-/ (decl : MetavarDecl)
+: TermElabM (Option Nat) := do
+  let fieldHoleMData? := getFieldHoleMDataFromMVar? decl
+  match fieldHoleMData? with
+  | some fieldHoleMData =>
+    -- let cond2 := prefixName == fieldHoleMData.prefixName
+    let cond3 := fieldsOverlap env s.structName (fieldHoleMData.structName)
+    trace[Elab.struct]
+      "goal name conflict for {fieldHoleMData.structName}: {cond3}"
+    if /-cond2 &&-/ cond3
+    then return some fieldHoleMData.index
+    else return none
+  | none => return none
+
+/-- Get the next non-conflicting index among all metavariable conflicts.
+    A metavariable conflicts iff all of the following are true:
+
+    * it is a named field hole created by `?..` syntax
+    * it is not from the same occurrence of `?..`
+    * it has the same prefix name (possibly `Name.anonymous` if it does not have a prefix)
+    * it belongs to a structure that has field names in common with the current structure
+
+    Note that this gets the index one greater than the maximum conflicting index, not the next
+    "available" index. We take a "wide berth" approach to avoid situations where it might appear
+    like two goals are from the same occurrence of `?..` despite this not being the case. -/
+def nextIndexGivenCollisions (env : Environment) (mctx : MetavarContext) (s : Struct)
+: TermElabM Nat := do
+  -- let prefixName := match s.source.implicit with
+  -- | some { name := some prefixName, .. } => prefixName
+  -- | _ => Name.anonymous
+  let conflictingIndex : (Option Nat) ← mctx.decls.foldl
+    (fun i? _ decl => do
+      let i'? ← getConflictingIndex? env s /-prefixName-/ decl
+      return (Option.merge max (← i?) i'?)) (pure none)
+  match conflictingIndex with
+  | some i => return i+1
+  | none   => return 0
+
+/-- Assign all fields which did not get synthesized during the default loop (but which were marked
+    as such) to appropriately-named field holes with metadata in the case of `?..` syntax (and to
+    natural holes when the `?` is absent). -/
+def assignRemainingDefaultsToFieldHoles (struct : Struct) : TermElabM Unit :=
+  withRef struct.ref do
+  if struct.source.implicit.isSome then
+  -- match struct.source.implicit with
+  -- | some vhc =>
+    let index ← nextIndexGivenCollisions (← getEnv) (← getMCtx) struct
+    trace[Elab.struct] "new goals: {(← allDefaultMissing struct)}"
+    for field in (← allDefaultMissing struct) do
+      match field.expr? with
+      | some expr =>
+        match defaultMissing? expr with
+        | some (.mvar mvarId) =>
+          let type := (← getMVarDecl mvarId).type
+          -- if vhc.isSynthetic then
+          mvarId.assign (← withRef field.ref <|
+            mkFreshFieldNamedMVar type index /-vhc.name-/ field struct)
+          -- else
+          --   let newHole ← withRef field.ref <| mkFreshExprMVar type (kind := .natural)
+          --   mvarId.assign newHole
+          --   registerMVarErrorHoleInfo newHole.mvarId! struct.ref
+        | _ => unreachable!
+      | none => unreachable!
+  -- | none => return ()
+
+end NamedGoalsWithMetadata
+
 
 partial def mkDefaultValueAux? (struct : Struct) : Expr → TermElabM (Option Expr)
   | .lam n d b c => withRef struct.ref do
@@ -868,10 +1067,12 @@ partial def propagateLoop (hierarchyDepth : Nat) (d : Nat) (struct : Struct) : M
       else
         propagateLoop hierarchyDepth (d+1) struct
 
-def propagate (struct : Struct) : TermElabM Unit :=
+def propagate (struct : Struct) : TermElabM Unit := do
   let hierarchyDepth := getHierarchyDepth struct
   let structNames := collectStructNames struct #[]
   propagateLoop hierarchyDepth 0 struct { allStructNames := structNames } |>.run' {}
+  if struct.source.implicit.isSome then
+    assignRemainingDefaultsToFieldHoles struct
 
 end DefaultFields
 
@@ -897,7 +1098,8 @@ private def elabStructInstAux (stx : Syntax) (expectedType? : Option Expr) (sour
   -/
   let { val := r, struct, instMVars } ← withSynthesize (mayPostpone := true) <| elabStruct struct expectedType?
   trace[Elab.struct] "before propagate {r}"
-  DefaultFields.propagate struct
+  if ! (← read).inPattern then
+    DefaultFields.propagate struct
   synthesizeAppInstMVars instMVars r
   return r
 
