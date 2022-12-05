@@ -8,6 +8,7 @@ import Lean.Parser.Term
 import Lean.Meta.Structure
 import Lean.Elab.App
 import Lean.Elab.Binders
+import Lean.Meta.Tactic.Simp.Main
 
 namespace Lean.Elab.Term.StructInst
 
@@ -831,14 +832,15 @@ def mkFieldHoleMDataKVMap (f : FieldHoleMData) : KVMap :=
   If there's any existing metadata on `type`, `metadata` is preferentially merged into it.
   -/
 def mkFreshExprMVarWithMData (type : Expr) (metadata : KVMap) (kind : MetavarKind := default)
-(userName := Name.anonymous) : MetaM Expr :=
-  let annotatedType :=
+(userName := Name.anonymous) : MetaM Expr := do
+  let (m?, t) :=
     match type with
-    | .mdata m e =>
-      let merge := mergeKVMap m metadata
-      Expr.mdata merge e
-    | _          =>
-      Expr.mdata metadata type
+    | .mdata m t => (some m, t)
+    | _          => (none, type)
+  let (simpt, _) ← dsimp t {}
+  let annotatedType := match m? with
+  | some m => Expr.mdata (mergeKVMap m metadata) simpt
+  | none => Expr.mdata metadata simpt
   mkFreshExprMVar annotatedType (kind := kind) (userName := userName)
 
 /-- Make a fresh expression metavariable for a field, named accordingly, and with metadata
