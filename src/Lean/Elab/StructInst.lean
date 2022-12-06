@@ -169,6 +169,8 @@ import Lean.Meta.Tactic.Simp.Main
 
   * Check for unnecessary checks
 
+  * Should the named metavariables be `withRef`? What does that do?
+
 -/
 
 namespace Lean.Elab.Term.StructInst
@@ -970,7 +972,7 @@ private partial def elabStruct (s : Struct) (expectedType? : Option Expr) : Term
             | .ok tacticSyntax =>
               -- if `..`, use a named field hole if the tactic fails (kept in `field`).
               if s.source.implicit.isSome then
-                let val := (← mkFreshExprMVar (some d) .synthetic)
+                let val ← withRef field.ref <| mkFreshExprMVar (some d) .synthetic
                 let stx ← `(by first | $tacticSyntax | exact $(← exprToSyntax val (some d)))
                 cont (← elabTermEnsuringType stx d)
                   {field with expr? := some (markDefaultMissing val)}
