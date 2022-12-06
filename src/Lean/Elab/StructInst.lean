@@ -173,6 +173,11 @@ import Lean.Meta.Tactic.Simp.Main
 
   * Should the named metavariables be `withRef`? What does that do?
 
+  * Should user-provided metavariables like `x := ?x` used to prevent default synthesis become
+    endowed with metadata?
+
+  * Should unused code be removed before merging?
+
 -/
 
 namespace Lean.Elab.Term.StructInst
