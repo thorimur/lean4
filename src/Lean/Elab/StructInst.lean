@@ -974,7 +974,7 @@ private partial def elabStruct (s : Struct) (expectedType? : Option Expr) : Term
             | .ok tacticSyntax =>
               -- if `..`, use a named field hole if the tactic fails (kept in `field`).
               if s.source.implicit.isSome then
-                let val ← withRef field.ref <| mkFreshExprMVar (some d) .synthetic
+                let val ← withRef field.ref <| mkFreshExprMVar (some d)
                 let stx ← `(by first | $tacticSyntax | exact $(← exprToSyntax val (some d)))
                 cont (← elabTermEnsuringType stx d)
                   {field with expr? := some (markDefaultMissing val)}
@@ -1222,7 +1222,7 @@ def mkFreshFieldNamedMVar (type : Expr) (index : Nat) /-(prefixName : Option Nam
     -- | none   => getFieldName field
   let name := if index == 0 then name else name.appendIndexAfter index
   let (simpt, _) ← dsimp type {}
-  mkFreshExprMVarWithMData simpt fieldHoleMData (kind := .syntheticOpaque) (userName := name)
+  mkFreshExprMVarWithMData simpt fieldHoleMData (kind := .natural) (userName := name)
 
 /-- Given the names of two structures, check if they have any field names in common. -/
 def fieldsOverlap (env : Environment) (structName₀ : Name) (structName₁ : Name) : Bool :=
