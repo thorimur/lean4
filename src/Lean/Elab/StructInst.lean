@@ -12,7 +12,7 @@ import Lean.Meta.Tactic.Simp.Main
 /-!
   # Structure Instances
 
-  ## Short version
+  ## Overview of code - Short version
 
   The way this works is that we start with syntax, parse it into a bare-bones `Struct`, use
   `expandStruct` to expand that struct into another struct that has intermediate indicators
@@ -22,7 +22,7 @@ import Lean.Meta.Tactic.Simp.Main
   the syntax) plus info on the original struct. We then synthesize defaults using `propagate` to
   assign any metavariables standing in for default values, and then return the expression.
 
-  ## Long version
+  ## Overview of code - Long version
 
   We start with turning the syntax into a struct. First we extract the sources (everything before
   the `with` and any occurrences of `..`), then we feed this to `elabStructInstAux` along with the
@@ -158,6 +158,8 @@ import Lean.Meta.Tactic.Simp.Main
     `case AddMonoidWithOne.mul`
 
   * Where should tests go?
+
+  * Remember to update interactive > hover expected.out!
 
   * Should utility-like functions for e.g. KVMaps be refactored into other files?
 
