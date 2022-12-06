@@ -184,11 +184,15 @@ def optEllipsis      := leading_parser
 /--
 Structure instance. `{ x := e, ... }` assigns `e` to field `x`, which may be
 inherited. If `e` is itself a variable called `x`, it can be elided:
-`fun y => { x := 1, y }`.
+`fun x => { x, y := 1 }`.
 A *structure update* of an existing value can be given via `with`:
 `{ point with x := 1 }`.
 The structure type can be specified if not inferable:
 `{ x := 1, y := 2 : Point }`.
+`..` can be used to represent all omitted fields in pattern-matching:
+`match s with | { x := 0, .. } => true ...`
+`..` can also be used to create named goals for all unspecified fields:
+`{ x := 0, .. : Point3D }` would create goals `?y`, `?z`.
 -/
 @[builtin_term_parser] def structInst := leading_parser
   "{" >> withoutPosition (ppHardSpace >> optional (atomic (sepBy1 termParser ", " >> " with "))
