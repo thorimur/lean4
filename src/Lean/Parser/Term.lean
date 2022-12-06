@@ -189,9 +189,9 @@ A *structure update* of an existing value can be given via `with`:
 `{ point with x := 1 }`.
 The structure type can be specified if not inferable:
 `{ x := 1, y := 2 : Point }`.
-`..` can be used to represent all omitted fields in pattern-matching:
-`match s with | { x := 0, .. } => true ...`
-`..` can also be used to create named goals for all unspecified fields:
+A trailing `..` can be used to represent all omitted fields in pattern-matching:
+`match s with | { x := 0, .. } => true ...`.
+The syntax `..` can also be used to create named goals for all unspecified fields:
 `{ x := 0, .. : Point3D }` would create goals `?y`, `?z`.
 -/
 @[builtin_term_parser] def structInst := leading_parser
