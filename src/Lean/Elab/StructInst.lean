@@ -974,7 +974,7 @@ private partial def elabStruct (s : Struct) (expectedType? : Option Expr) : Term
             | .ok tacticSyntax =>
               -- if `..`, use a named field hole if the tactic fails (kept in `field`).
               if s.source.implicit.isSome then
-                let val ← withRef field.ref <| mkFreshExprMVar (some d) .synthetic
+                let val ← withRef field.ref <| mkFreshExprMVar (some d)
                 let stx ← `(by first | $tacticSyntax | exact $(← exprToSyntax val (some d)))
                 cont (← elabTermEnsuringType stx d)
                   {field with expr? := some (markDefaultMissing val)}
