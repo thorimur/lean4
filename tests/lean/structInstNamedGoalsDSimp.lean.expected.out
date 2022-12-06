@@ -1,0 +1,7 @@
+structInstNamedGoalsDSimp.lean:7:21-7:45: error: unsolved goals
+case b
+⊢ 1 = 1
+def pi.Inhabited : {α : Type} →
+  {β : α → Type} → [inst : (x : α) → Inhabited.{1} (β x)] → Inhabited.{1} ((x : α) → β x) :=
+fun {α : Type} {β : α → Type} [inst : (x : α) → Inhabited.{1} (β x)] =>
+  @Inhabited.mk.{1} ((x : α) → β x) fun (x : α) => @Inhabited.default.{1} (β x) (inst x)
