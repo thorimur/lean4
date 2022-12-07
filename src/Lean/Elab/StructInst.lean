@@ -196,8 +196,9 @@ structure Source where
   implicit : Option Syntax
   deriving Inhabited
 
-/-- Check if neither an explicit nor an implicit source has been specified (i.e. no `with` and no
-    `..`) -/
+/--
+  Check if neither an explicit nor an implicit source has been specified (i.e. no `with` nor `..`)
+-/
 def Source.isNone : Source → Bool
   | { explicit := #[], implicit := none } => true
   | _ => false
@@ -207,7 +208,7 @@ def Source.isNone : Source → Bool
   `optional (atomic (sepBy1 termParser ", " >> " with ")`, e.g. `s₁, s₂, s₃ with`.
 
   Panics if its first argument is an empty `Array`.
-  -/
+-/
 private def mkSourcesWithSyntax (sources : Array Syntax) : Syntax :=
   let ref := sources[0]!
   let stx := Syntax.mkSep sources (mkAtomFrom ref ", ")
@@ -306,7 +307,8 @@ private def elabModifyOp (stx modifyOp : Syntax) (sources : Array ExplicitSource
   This method tries to postpone execution if the expected type is not available.
 
   If the expected type is available and it is a structure, then we use it.
-  Otherwise, we use the type of the first source. -/
+  Otherwise, we use the type of the first source.
+-/
 private def getStructName (expectedType? : Option Expr) (sourceView : Source) : TermElabM Name := do
   tryPostponeIfNoneOrMVar expectedType?
   let useSource : Unit → TermElabM Name := fun _ => do
@@ -360,7 +362,7 @@ instance : ToFormat FieldLHS := ⟨fun lhs =>
   The polymorphism via its `Type` argument is only used for nested `FieldVal`s, which need to
   know what type their argument should be. In practice, we only ever take this argument to be
   `Struct`.
-  -/
+-/
 inductive FieldVal (σ : Type) where
   /-- Term syntax encountered on the RHS of a binding, e.g. `1+1` in `x := 1+1`. -/
   | term  (stx : Syntax) : FieldVal σ
@@ -401,9 +403,11 @@ def Field.isSimple {σ} : Field σ → Bool
   The organized content of the structure instance.
 
   The field `params` is used for `.default` value propagation. It is initially empty, and
-  then set at `elabStruct`. -/
+  then set at `elabStruct`.
+-/
 inductive Struct where
-  /-- Remark: the field `params` is use for default value propagation. It is initially empty, and then set at `elabStruct`. -/
+  /-- Remark: the field `params` is use for default value propagation. It is initially empty, and
+      then set at `elabStruct`. -/
   | mk (ref : Syntax) (structName : Name) (params : Array (Name × Expr)) (fields : List (Field Struct)) (source : Source)
   deriving Inhabited
 
@@ -465,17 +469,17 @@ instance : ToFormat (Field Struct) := ⟨formatField formatStruct⟩
 instance : ToString (Field Struct) := ⟨toString ∘ format⟩
 
 /--
-Turns a `FieldLHS` into syntax. The first argument specifies whether this is the first in a list of
-`FieldLHS`'s or not.
+  Turns a `FieldLHS` into syntax. The first argument specifies whether this is the first in a list
+  of `FieldLHS`'s or not.
 
-Recall that `structInstField` elements have the form
-```lean
-   def structInstField  := leading_parser structInstLVal >> " := " >> termParser
-   def structInstLVal   := leading_parser (ident <|> numLit <|> structInstArrayRef) >> many (("." >> (ident <|> numLit)) <|> structInstArrayRef)
-   def structInstArrayRef := leading_parser "[" >> termParser >>"]"
-```
+  Recall that `structInstField` elements have the form
+  ```lean
+    def structInstField  := leading_parser structInstLVal >> " := " >> termParser
+    def structInstLVal   := leading_parser (ident <|> numLit <|> structInstArrayRef) >> many (("." >> (ident <|> numLit)) <|> structInstArrayRef)
+    def structInstArrayRef := leading_parser "[" >> termParser >>"]"
+  ```
 
-Remark: this code relies on the fact that `expandStruct` only transforms `fieldLHS.fieldName`
+  Remark: this code relies on the fact that `expandStruct` only transforms `fieldLHS.fieldName`
 -/
 def FieldLHS.toSyntax (first : Bool) : FieldLHS → Syntax
   | .modifyOp   stx _    => stx
@@ -558,8 +562,10 @@ private def expandCompositeFields (s : Struct) : Struct :=
       { field with lhs := newEntries ++ rest }
     | _ => field
 
-/-- Replaces field lhs's that are specified by index with the name of the field (as registered in
-    the structure). -/
+/--
+  Replaces field lhs's that are specified by index with the name of the field (as registered in
+  the structure).
+-/
 private def expandNumLitFields (s : Struct) : TermElabM Struct :=
   s.modifyFieldsM fun fields => do
     let env ← getEnv
@@ -571,26 +577,27 @@ private def expandNumLitFields (s : Struct) : TermElabM Struct :=
         else return { field with lhs := .fieldName ref fieldNames[idx - 1]! :: rest }
       | _ => return field
 
-/-- For example, consider the following structures:
-   ```lean
-   structure A where
-     x : Nat
+/--
+  For example, consider the following structures:
+  ```lean
+  structure A where
+    x : Nat
 
-   structure B extends A where
-     y : Nat
+  structure B extends A where
+    y : Nat
 
-   structure C extends B where
-     z : Bool
-   ```
-   This method expands parent structure fields using the path to the parent structure.
-   For example,
-   ```lean
-   { x := 0, y := 0, z := true : C }
-   ```
-   is expanded into
-   ```lean
-   { toB.toA.x := 0, toB.y := 0, z := true : C }
-   ```
+  structure C extends B where
+    z : Bool
+  ```
+  This method expands parent structure fields using the path to the parent structure.
+  For example,
+  ```lean
+  { x := 0, y := 0, z := true : C }
+  ```
+  is expanded into
+  ```lean
+  { toB.toA.x := 0, toB.y := 0, z := true : C }
+  ```
 -/
 private def expandParentFields (s : Struct) : TermElabM Struct := do
   let env ← getEnv
@@ -610,13 +617,16 @@ private def expandParentFields (s : Struct) : TermElabM Struct := do
           | _ => throwErrorAt ref "failed to access field '{fieldName}' in parent structure"
     | _ => return field
 
-/-- Abbreviation for `HashMap Name Fields`: A hash map from field names to lists of representations
-    of fields. -/
+/--
+  Abbreviation for `HashMap Name Fields`: A hash map from field names to lists of representations
+  of fields.
+-/
 private abbrev FieldMap := HashMap Name Fields
 
-/-- Creates a hash map from field names to lists of representations of fields. The length of the
-    list can be greater than one if the field is not simple. Panics if the lhs of a field is empty.
-    -/
+/--
+  Creates a hash map from field names to lists of representations of fields. The length of the
+  list can be greater than one if the field is not simple. Panics if the lhs of a field is empty.
+-/
 private def mkFieldMap (fields : Fields) : TermElabM FieldMap :=
   fields.foldlM (init := {}) fun fieldMap field =>
     match field.lhs with
@@ -635,16 +645,20 @@ private def isSimpleField? : Fields → Option (Field Struct)
   | [field] => if field.isSimple then some field else none
   | _       => none
 
-/-- Finds the index of the field name in its third argument in the list of field names in its
-    second. The first argument (the name of the structure) is used only for descriptive error
-    messages. -/
+/--
+  Finds the index of the field name in its third argument in the list of field names in its
+  second. The first argument (the name of the structure) is used only for descriptive error
+  messages.
+-/
 private def getFieldIdx (structName : Name) (fieldNames : Array Name) (fieldName : Name) : TermElabM Nat := do
   match fieldNames.findIdx? fun n => n == fieldName with
   | some idx => return idx
   | none     => throwError "field '{fieldName}' is not a valid field of '{structName}'"
 
-/-- Constructs the syntax for a field projection. Only does so if the given field name is in fact a
-    field of the given structure name; returns `none` otherwise. -/
+/--
+  Constructs the syntax for a field projection. Only does so if the given field name is in fact a
+  field of the given structure name; returns `none` otherwise.
+-/
 def mkProjStx? (s : Syntax) (structName : Name) (fieldName : Name) : TermElabM (Option Syntax) := do
   if (findField? (← getEnv) structName fieldName).isNone then
     return none
@@ -659,10 +673,11 @@ def findField? (fields : Fields) (fieldName : Name) : Option (Field Struct) :=
 
 mutual
 
-  /-- Group fields that belong to a subobject as a `Struct` under that subobject field via a
-      `.nested s` `FieldVal`. For example, a `Struct` representing
-      `{ toFoo.x := 1, toFoo.y := 2, z := 3 }` will become one representing
-      `{ toFoo := { x := 1, y := 2 }, z := 3 }`.
+  /--
+    Group fields that belong to a subobject as a `Struct` under that subobject field via a
+    `.nested s` `FieldVal`. For example, a `Struct` representing
+    `{ toFoo.x := 1, toFoo.y := 2, z := 3 }` will become one representing
+    `{ toFoo := { x := 1, y := 2 }, z := 3 }`.
   -/
   private partial def groupFields (s : Struct) : TermElabM Struct := do
     let env ← getEnv
@@ -728,9 +743,11 @@ mutual
               addField FieldVal.default
       return s.setFields fields.reverse
 
-  /-- Put the `Struct` into canonical form by expanding different ways of specifying fields
-      (composite, by index, subobject); group fields by subobject; and incorporate values (or
-      holes) sources. -/
+  /--
+    Put the `Struct` into canonical form by expanding different ways of specifying fields
+    (composite, by index, subobject); group fields by subobject; and incorporate values (or
+    holes) sources.
+  -/
   private partial def expandStruct (s : Struct) : TermElabM Struct := do
     let s := expandCompositeFields s
     let s ← expandNumLitFields s
@@ -751,8 +768,10 @@ structure CtorHeaderResult where
   /-- Named parameters encountered in bindings of the type and the expressions used for them. -/
   params     : Array (Name × Expr)
 
-/-- Helper function that processes the constructor and its type until its first parameter, which
-    represents the remaining arity of the constructor, reaches 0. -/
+/--
+  Helper function that processes the constructor and its type until its first parameter, which
+  represents the remaining arity of the constructor, reaches 0.
+-/
 private def mkCtorHeaderAux : Nat → Expr → Expr → Array MVarId → Array (Name × Expr) → TermElabM CtorHeaderResult
   | 0,   type, ctorFn, instMVars, params => return { ctorFn , ctorFnType := type, instMVars, params }
   | n+1, type, ctorFn, instMVars, params => do
@@ -767,16 +786,20 @@ private def mkCtorHeaderAux : Nat → Expr → Expr → Array MVarId → Array (
         mkCtorHeaderAux n (b.instantiate1 a) (mkApp ctorFn a) instMVars (params.push (paramName, a))
     | _ => throwError "unexpected constructor type"
 
-/-- Burrows into the body of a `.forallE` expression `n` times if possible, and returns the result.
-    If an expression not of the form `.forallE` is encountered along the way, return `none`.  -/
+/--
+  Burrows into the body of a `.forallE` expression `n` times if possible, and returns the result.
+  If an expression not of the form `.forallE` is encountered along the way, return `none`.
+-/
 private partial def getForallBody : Nat → Expr → Option Expr
   | i+1, .forallE _ _ b _ => getForallBody i b
   | _+1, _                => none
   | 0,   type             => type
 
-/-- When the expected type is known, attempt to get the type of the constructor by stripping `n`
-    `.forallE`'s off of the expression and then assigning metavariables by `isDefEq`'ing with
-    the expected type. -/
+/--
+  When the expected type is known, attempt to get the type of the constructor by stripping `n`
+  `.forallE`'s off of the expression and then assigning metavariables by `isDefEq`'ing with
+  the expected type.
+-/
 private def propagateExpectedType (type : Expr) (numFields : Nat) (expectedType? : Option Expr) : TermElabM Unit := do
   match expectedType? with
   | none              => return ()
@@ -797,13 +820,17 @@ private def mkCtorHeader (ctorVal : ConstructorVal) (expectedType? : Option Expr
   synthesizeAppInstMVars r.instMVars r.ctorFn
   return r
 
-/-- Annotate an expression to indicate that it must be synthesized as a default value.
-    In practice, the expression will be a metavariable. -/
+/--
+  Annotate an expression to indicate that it must be synthesized as a default value.
+  In practice, the expression will be a metavariable.
+-/
 def markDefaultMissing (e : Expr) : Expr :=
   mkAnnotation `structInstDefault e
 
-/-- Check if an expression has been annotated in a way that indicates it should be synthesized
-    during the default loop. -/
+/--
+  Check if an expression has been annotated in a way that indicates it should be synthesized
+  during the default loop.
+-/
 def defaultMissing? (e : Expr) : Option Expr :=
   annotation? `structInstDefault e
 
@@ -826,7 +853,7 @@ def trySynthStructInstance? (s : Struct) (expectedType : Expr) : TermElabM (Opti
     expression that the structure instance elaborates to. (Note that this is distinct from the
     `val` of each field, which is a `FieldVal`.)
   * `instMVars : Array MVarId`, used for keeping track of instances.
-  -/
+-/
 structure ElabStructResult where
   /-- The structure's constructor applied to the field values (`expr?`s). This is the actual
       expression that the structure instance elaborates to. -/
@@ -910,38 +937,40 @@ private partial def elabStruct (s : Struct) (expectedType? : Option Expr) : Term
 
 namespace DefaultFields
 
-/-- Updated as we search for default values. We must search for default values overriden in derived
-    structures. -/
+/--
+  Updated as we search for default values. We must search for default values overriden in derived
+  structures.
+-/
 structure Context where
   /-- `Struct`s in the context which might supply default values. -/
   structs : Array Struct := #[]
   /-- The names of structures in the context which might supply default values. -/
   allStructNames : Array Name := #[]
   /--
-  Consider the following example:
-  ```lean
-  structure A where
-    x : Nat := 1
+    Consider the following example:
+    ```lean
+    structure A where
+      x : Nat := 1
 
-  structure B extends A where
-    y : Nat := x + 1
-    x := y + 1
+    structure B extends A where
+      y : Nat := x + 1
+      x := y + 1
 
-  structure C extends B where
-    z : Nat := 2*y
-    x := z + 3
-  ```
-  And we are trying to elaborate a structure instance for `C`. There are default values for `x` at `A`, `B`, and `C`.
-  We say the default value at `C` has distance 0, the one at `B` distance 1, and the one at `A` distance 2.
-  The field `maxDistance` specifies the maximum distance considered in a round of Default field computation.
-  Remark: since `C` does not set a default value of `y`, the default value at `B` is at distance 0.
+    structure C extends B where
+      z : Nat := 2*y
+      x := z + 3
+    ```
+    And we are trying to elaborate a structure instance for `C`. There are default values for `x` at `A`, `B`, and `C`.
+    We say the default value at `C` has distance 0, the one at `B` distance 1, and the one at `A` distance 2.
+    The field `maxDistance` specifies the maximum distance considered in a round of Default field computation.
+    Remark: since `C` does not set a default value of `y`, the default value at `B` is at distance 0.
 
-  The fixpoint for setting default values works in the following way.
-  - Keep computing default values using `maxDistance == 0`.
-  - We increase `maxDistance` whenever we failed to compute a new default value in a round.
-  - If `maxDistance > 0`, then we interrupt a round as soon as we compute some default value.
-    We use depth-first search.
-  - We sign an error if no progress is made when `maxDistance` == structure hierarchy depth (2 in the example above).
+    The fixpoint for setting default values works in the following way.
+    - Keep computing default values using `maxDistance == 0`.
+    - We increase `maxDistance` whenever we failed to compute a new default value in a round.
+    - If `maxDistance > 0`, then we interrupt a round as soon as we compute some default value.
+      We use depth-first search.
+    - We sign an error if no progress is made when `maxDistance` == structure hierarchy depth (2 in the example above).
   -/
   maxDistance : Nat := 0
 
@@ -950,8 +979,10 @@ structure State where
   /-- Indicates whether progress has been made during a round in the default loop. -/
   progress : Bool := false
 
-/-- Collects the names of all nested structures in a `Struct` (at any depth), including the name of
-    the structure itself. -/
+/--
+  Collects the names of all nested structures in a `Struct` (at any depth), including the name of
+  the structure itself.
+-/
 partial def collectStructNames (struct : Struct) (names : Array Name) : Array Name :=
   let names := names.push struct.structName
   struct.fields.foldl (init := names) fun names field =>
@@ -959,16 +990,20 @@ partial def collectStructNames (struct : Struct) (names : Array Name) : Array Na
     | .nested struct => collectStructNames struct names
     | _ => names
 
-/-- Gets the maximum depth at which any structure is nested within the given structure, i.e. the
-    height of its subobject poset. -/
+/--
+  Gets the maximum depth at which any structure is nested within the given structure, i.e. the
+  height of its subobject poset.
+-/
 partial def getHierarchyDepth (struct : Struct) : Nat :=
   struct.fields.foldl (init := 0) fun max field =>
     match field.val with
     | .nested struct => Nat.max max (getHierarchyDepth struct + 1)
     | _ => max
 
-/-- (Monadic) Checks if the value of a field (`expr?`) is an unassigned metavariable that is
-    annotated to indicate that it should be synthesized during the default loop. -/
+/--
+  (Monadic) Checks if the value of a field (`expr?`) is an unassigned metavariable that is
+  annotated to indicate that it should be synthesized during the default loop.
+-/
 def isDefaultMissing? [Monad m] [MonadMCtx m] (field : Field Struct) : m Bool := do
   if let some expr := field.expr? then
     if let some (.mvar mvarId) := defaultMissing? expr then
@@ -976,18 +1011,22 @@ def isDefaultMissing? [Monad m] [MonadMCtx m] (field : Field Struct) : m Bool :=
         return true
   return false
 
-/-- (Monadic) Gets the first encountered field in a `Struct` whose value (`expr?`) is an unassigned
-    metavariable that is annotated to indicate that it should be synthesized during the default
-    loop. -/
+/--
+  (Monadic) Gets the first encountered field in a `Struct` whose value (`expr?`) is an unassigned
+  metavariable that is annotated to indicate that it should be synthesized during the default
+  loop.
+-/
 partial def findDefaultMissing? [Monad m] [MonadMCtx m] (struct : Struct) : m (Option (Field Struct)) :=
   struct.fields.findSomeM? fun field => do
    match field.val with
    | .nested struct => findDefaultMissing? struct
    | _ => return if (← isDefaultMissing? field) then field else none
 
-/-- (Monadic) Gets an array containing all fields in the `Struct` whose value (`expr?`) is an
-    unassigned metavariable that is annotated to indicate that it should be synthesized during the
-    default loop. -/
+/--
+  (Monadic) Gets an array containing all fields in the `Struct` whose value (`expr?`) is an
+  unassigned metavariable that is annotated to indicate that it should be synthesized during the
+  default loop.
+-/
 partial def allDefaultMissing [Monad m] [MonadMCtx m] (struct : Struct) : m (Array (Field Struct)) :=
   go struct *> get |>.run' #[]
 where
@@ -1000,21 +1039,27 @@ where
       else if (← isDefaultMissing? field) then
         modify (·.push field)
 
-/-- Gets the name of a field, assuming that its `lhs` is of the form `[.fieldName _ fieldName]`.
-    Panics otherwise. -/
+/--
+  Gets the name of a field, assuming that its `lhs` is of the form `[.fieldName _ fieldName]`.
+  Panics otherwise.
+-/
 def getFieldName (field : Field Struct) : Name :=
   match field.lhs with
   | [.fieldName _ fieldName] => fieldName
   | _ => unreachable!
 
-/-- Abbreviation for `ReaderT Context (StateRefT State TermElabM)`: A monad transformation of
-    `TermElabM` that lets us access the `Context` (relevant for checking if default values are
-    overridden) and keeping track of whether progress has been made during a round of the default
-    loop (`State`). -/
+/--
+  Abbreviation for `ReaderT Context (StateRefT State TermElabM)`: A monad transformation of
+  `TermElabM` that lets us access the `Context` (relevant for checking if default values are
+  overridden) and keeping track of whether progress has been made during a round of the default
+  loop (`State`).
+-/
 abbrev M := ReaderT Context (StateRefT State TermElabM)
 
-/-- Checks if the round has completed by checking that progress has been made and that the
-    `maxDistance > 0`. -/
+/--
+  Checks if the round has completed by checking that progress has been made and that the
+  `maxDistance > 0`.
+-/
 def isRoundDone : M Bool := do
   return (← get).progress && (← read).maxDistance > 0
 
@@ -1054,8 +1099,10 @@ partial def mkDefaultValueAux? (struct : Struct) : Expr → TermElabM (Option Ex
     else
       return some e
 
-/-- If possible, make a default value by applying lambdas in the given constant to the appropriate
-    field values or propagated parameter values. -/
+/--
+  If possible, make a default value by applying lambdas in the given constant to the appropriate
+  field values or propagated parameter values.
+-/
 def mkDefaultValue? (struct : Struct) (cinfo : ConstantInfo) : TermElabM (Option Expr) :=
   withRef struct.ref do
   let us ← mkFreshLevelMVarsFor cinfo
@@ -1207,7 +1254,8 @@ end DefaultFields
 /--
   The main elaboration work. We normalize the `Struct`'s form, call
   `elabStruct` to compute field values and construct the elaborated expression, run the default
-  synthesis loop (and provide named field holes if warranted), and synthesize instances. -/
+  synthesis loop (and provide named field holes if warranted), and synthesize instances.
+-/
 private def elabStructInstAux (stx : Syntax) (expectedType? : Option Expr) (source : Source) : TermElabM Expr := do
   let structName ← getStructName expectedType? source
   let struct ← liftMacroM <| mkStructView stx structName source
