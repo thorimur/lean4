@@ -24,65 +24,80 @@ import Lean.Meta.Tactic.Simp.Main
 
   ## Overview of code - Long version
 
-  We start with turning the syntax into a struct. First we extract the sources (everything before
-  the `with` and any occurrences of `..`), then we feed this to `elabStructInstAux` along with the
-  raw syntax and expected type. Inside `elabStructInstAux` we make the syntax into a Struct
-  (`mkStructView`), then `expandStruct`.
+  Before we start, we apply macros which take care of type annotations and expand field
+  abbreviations (e.g. turning `x` into `x := x`).
 
-  There's a "pre-expression scaffolding/framework/spine" set up early on in the process in the form
-  of FieldVal's, which hold raw information: `.term stx` where `stx` is syntax, if a term was
-  provided; a `.default` value if it was missing; or a `.nested s` value where `s` is a `Struct` if
-  a subobject relation obtains. The `FieldVal`s for a field might be modified as elaboration
-  proceeds: for example, some might become `.nested`, or some defaults might turn into terms. Also,
-  if we encounter `..` in the syntax and we're elaborating this structure instance within a
-  pattern, we use a `.term` with a syntactic hole for each missing field instead of using a
-  `.default` value. This all happens during `expandStruct`.
+  Our first non-macro step is to extract the sources (everything before `with` (if present) and any
+  occurrences of `..`). Then we feed this to `elabStructInstAux` along with the
+  raw syntax and expected type. Inside `elabStructInstAux` we make the syntax into an extremely
+  basic `Struct` (`mkStructView`).
 
-  The `Struct` holds everything, and is updated throughout the process.
+  The `Struct` organizes all information pertaining to the structure instance, and is updated throughout the elaboration as various parts are computed.
 
   One of its fields is `field`, which holds a list of `Field Struct`'s. (The appearance of `Struct`
   within `Field Struct` is to allow the `Struct`s to nest other `Struct`s when we have subobjects.)
 
-  The fields of each element of the `field` field (got that?) are
+  The fields of each element of the `field : List (Field Struct)` field (got that?) are
 
   * `ref : Syntax`, which holds the `Syntax` found for that field
   * `lhs : FieldLHS`, which describes the name of the field in question
-  * `val : FieldVal`, which holds the pre-expression `FieldVal`—either `.term stx` where `stx` is
-    the syntax of the field's value, `.default` if no syntax was found, or `.nested s` if the
-    field represents a subobject `s` of the structure (e.g. `toFoo`, produced by `extends`)
+  * `val : FieldVal`, which holds basic information on what values were encountered in the syntax
   * `expr? : Option Expr`, which holds the elaborated expression when it becomes available (or a
-  metavariable, if the syntax is missing), and which begins at this stage as `none`.
+    metavariable, if the value needs to be synthesized as a default value). It begins at
+    this stage as `none`.
 
-  `elacStructInstAux` then calls `elabStruct` on the skeletal `Struct` (which has appropriate
+  There's a "pre-expression framework" set up early on in the process in the form of FieldVal's,
+  which organize the raw information for each field. Each `FieldVal` can be a:
+
+  * `.term stx` where `stx` is syntax, if a term was provided via syntax
+  * `.default` if the field was omitted—however, if we had encountered `..` in the syntax, we use
+    a `.term` with a syntactic hole for each missing field instead of using a `.default` value
+  * `.nested s` where `s` is a `Struct` if the field represents a parent structure, e.g.
+    `toFoo`
+
+  The `FieldVal`s in a struct might be modified or re-organized as elaboration proceeds: for
+  example, we might start with a `.term` but then turn it into a field within a `.nested` struct
+  during `groupFields` if they belong to a subobject. `mkStructView` turns any encountered syntax
+  specifying a field into a `.term stx`. `expandStruct` sets up the rest: canonicalizing different
+  ways of specifying fields into `FieldLHS`s (`expandCompositeFields`, `expandNumLitFields`,
+  `expandParentFields`), grouping fields into `.nested` substructures (`groupFields`), and taking
+  care of missing fields by e.g. adding them as `.default` `FieldVal`s (`addMissingFields`).
+
+  `elabStructInstAux` then calls `elabStruct` on the still-skeletal `Struct` (which has appropriate
   `FieldVal`s, but `none` for each field's `expr?`), which turns the `Struct` into an
   `ElabStructResult`.
 
   `elabStruct` elaborates everything but defaults, constructing the structure instance as an
   expression given by the application of the structure's constructor to the values it finds by
   elaborating the `stx` in any `.term stx` `FieldVal` while ensuring the appropriate type. (It's
-  not quite true that no defaults are taken care of here: `autoparam`s are turned into `.term`s. If
-  a `..` is present and we're *not* in a pattern, we wrap it in a tactic that fails gracefully.)
+  not quite true that no defaults are taken care of here: `autoparam`s are turned into `.term`s.)
   If the `FieldVal` is `.nested s`, it calls `elabStruct` on `s`; if it finds a `.default`
-  `FieldVal`, it uses a fresh metavariable in place of an elaborated expression.
+  `FieldVal`, it uses a fresh metavariable as the elaborated expression, and defers synthesis of
+  that default value to the default loop. Like other elaborated expressions, this is both inserted
+  into the constructor application expression and stored in `expr?`. We also annotate that
+  metavariable with ``structInstDefault` to directly indicate that it must be synthesized during
+  the default loop.
 
-  As it does this, it stores any elaborated expressions in the `expr?` field of its
-  fields and builds this constructor application expression, which is, in the resulting
-  `ElabStructResult` structure, confusingly also named "val". Occasionally the `FieldVals` for each
-  field are updated as well. Also returned in `ElabStructResult` is the updated `Struct` with all
-  its new fields, and `instMVars`, an array of metavariables for dealing with typeclass instance
-  synthesis.
+  As it does this, it stores any elaborated expressions in the `expr?` field of the corresponding
+  fields and builds the constructor application expression, which is stored in a field of the
+  resulting `ElabStructResult` structure (coincidentally also named "`val`"). Occasionally the
+  `FieldVals` for each field are updated as well. Also returned in `ElabStructResult` is the
+  updated `Struct` with all its new fields, and `instMVars`, an array of metavariables for dealing
+  with typeclass instance synthesis.
 
-  During `elabStruct`, `.default`s were inserted as metavariables into the constructed expression
-  and into `expr?`, but they were also annotated with ``structInstDefault` to indicate that they
-  represented a missing default value, and needed to be synthesized during the default loop.
-  The function `isMissingDefault?` checks that this metavariable is unassigned when deciding
-  whether to return true or false. We finish our elaboration of the structure instance
-  with the `propagate` loop, which iteratively synthesizes the defaults, as sometimes the default
-  values of fields reference other fields which may also have a default value (etc.). If we finish
-  the loop and there are still fields that are `isMissingDefault?`, we throw an error with the
-  missing fields. However, if `..` was encountered in the syntax and we're *not* inside a pattern,
-  we instead exit the loop without error and assign all such remaining fields to named synthetic
-  opaque metavariables with `assignRemainingDefaultsToFieldHoles`.
+  We finish our elaboration of the structure instance with the `propagate` loop, which iteratively
+  synthesizes the defaults. We find out which defaults have not yet been synthesized with
+  `isMissingDefault?`, which checks that the metavariables which we used as a placeholder for
+  unsynthesized default values back in `elabStruct` is annotated with the ``structInstDefault`
+  indicator and that it's still unassigned (i.e. that it has not yet had a default value attached
+  to it). As we synthesize default values, we assign these metavariables to the values
+  we find. This leads the new values to appear in the constructor application expression we've
+  constructed upon instantiation.
+
+  The fact that it "iteratively" synthesizes defaults refers to the fact that sometimes the default
+  values of fields reference fields in parent structures which may also need to be synthesized via
+  the default value loop (etc.). If we've searched as far as we can and there are still fields that
+  are `isMissingDefault?`, we throw an error with the missing fields.
 
 -/
 
@@ -737,7 +752,8 @@ structure CtorHeaderResult where
   /-- Named parameters encountered in bindings of the type and the expressions used for them. -/
   params     : Array (Name × Expr)
 
-/-- Helper function that processes the constructor and its type until its first parameter reaches 0.
+/-- Helper function that processes the constructor and its type until its first parameter, which
+    represents the remaining arity of the constructor, reaches 0.
 -/
 private def mkCtorHeaderAux : Nat → Expr → Expr → Array MVarId → Array (Name × Expr) → TermElabM CtorHeaderResult
   | 0,   type, ctorFn, instMVars, params => return { ctorFn , ctorFnType := type, instMVars, params }
