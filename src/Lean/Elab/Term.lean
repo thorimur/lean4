@@ -1705,9 +1705,11 @@ def expandDeclId (currNamespace : Name) (currLevelNames : List Name) (declId : S
   `(Nat.succ $(← exprToSyntax e' t))
   ```
 -/
-def exprToSyntax (e : Expr) (type : Option Expr := none): TermElabM Term := withFreshMacroScope do
+def exprToSyntax (e : Expr) (type : Option Expr := none) : TermElabM Term := withFreshMacroScope do
   let result ← `(?m)
-  let eType := type.getD (← inferType e)
+  let eType ← match type with
+    | some t => pure t
+    | none   => inferType e
   let mvar ← elabTerm result eType
   mvar.mvarId!.assign e
   return result
