@@ -8,7 +8,6 @@ import Lean.Parser.Term
 import Lean.Meta.Structure
 import Lean.Elab.App
 import Lean.Elab.Binders
-import Lean.Meta.Tactic.Simp.Main
 /-!
   # Structure Instances
 
@@ -27,7 +26,7 @@ import Lean.Meta.Tactic.Simp.Main
   Before we start, we apply macros which take care of type annotations and expand field
   abbreviations (e.g. turning `x` into `x := x`).
 
-  Our first non-macro step is to extract the sources (everything before `with` (if present) and any
+  Our first non-macro step is to extract the sources (everything before `with`, if present, and any
   occurrences of `..`). Then we feed this to `elabStructInstAux` along with the
   raw syntax and expected type. Inside `elabStructInstAux` we make the syntax into an extremely
   basic `Struct` (`mkStructView`).
@@ -378,7 +377,7 @@ inductive FieldVal (σ : Type) where
 
   `expr?` begins as `none`, and is modified over the course of this code as we figure out whether
   we need to elaborate some syntax encountered (e.g. if `.term stx` is in `val`) or if the field
-  value is `.missing` (in which case we make a metavariable).
+  value is `.default` (in which case we make a metavariable).
 -/
 structure Field (σ : Type) where
   /-- The syntax of the binding used to specify this field. -/
@@ -401,7 +400,7 @@ def Field.isSimple {σ} : Field σ → Bool
 /--
   The organized content of the structure instance.
 
-  The field `params` is used for `.missing` value propagation. It is initially empty, and
+  The field `params` is used for `.default` value propagation. It is initially empty, and
   then set at `elabStruct`. -/
 inductive Struct where
   /-- Remark: the field `params` is use for default value propagation. It is initially empty, and then set at `elabStruct`. -/
@@ -419,7 +418,7 @@ def Struct.ref : Struct → Syntax
 def Struct.structName : Struct → Name
   | ⟨_, structName, _, _, _⟩ => structName
 
-/-- Parameters used during the initial processing of `.missing` fields. Initially `none`, and set
+/-- Parameters used during the initial processing of `.default` fields. Initially `none`, and set
     at `elabStruct`. -/
 def Struct.params : Struct → Array (Name × Expr)
   | ⟨_, _, params, _, _⟩ => params
@@ -698,7 +697,7 @@ mutual
     Add `val : FieldVal`s to fields as specified by the sources.
 
     If a value is found in the explicit sources (i.e. prior to `with`), add it as a `.term` or a
-    `.nested` `FieldVal`, as appropriate. If it's missing, check for `..`: if inside a pattern, make a hole via syntax as a `.term`. In all other cases, mark missing fields as `.default`.
+    `.nested` `FieldVal`, as appropriate. If it's missing, check for `..`: if present, make a hole via syntax as a `.term`. In all other cases, mark missing fields as `.default`.
   -/
   private partial def addMissingFields (s : Struct) : TermElabM Struct := do
     let env ← getEnv
@@ -753,8 +752,7 @@ structure CtorHeaderResult where
   params     : Array (Name × Expr)
 
 /-- Helper function that processes the constructor and its type until its first parameter, which
-    represents the remaining arity of the constructor, reaches 0.
--/
+    represents the remaining arity of the constructor, reaches 0. -/
 private def mkCtorHeaderAux : Nat → Expr → Expr → Array MVarId → Array (Name × Expr) → TermElabM CtorHeaderResult
   | 0,   type, ctorFn, instMVars, params => return { ctorFn , ctorFnType := type, instMVars, params }
   | n+1, type, ctorFn, instMVars, params => do
@@ -827,7 +825,7 @@ def trySynthStructInstance? (s : Struct) (expectedType : Expr) : TermElabM (Opti
   * `val : Expr`, the constructor applied to the field values (`expr?`s). This is the actual
     expression that the structure instance elaborates to. (Note that this is distinct from the
     `val` of each field, which is a `FieldVal`.)
-  * `instMVars : Array MVarId`, used forkeeping track of instances.
+  * `instMVars : Array MVarId`, used for keeping track of instances.
   -/
 structure ElabStructResult where
   /-- The structure's constructor applied to the field values (`expr?`s). This is the actual
@@ -842,19 +840,18 @@ structure ElabStructResult where
 /--
   Elaborates a `Struct` into an `ElabStructResult`.
 
-  This computes expressions for all fields of a structure (in `expr?`) on the basis of `FieldVal`s
-  while simultaneously building the elaboration of the structure instance itself, in the form of
-  its constructor applied to the expressions for each of its fields in turn.
+  This computes values for all fields of a structure (in `expr?`) on the basis of the given
+  `FieldVal`s, while simultaneously building the expression for structure instance itself, in the
+  form of its constructor applied to the expressions for each of its fields in turn.
 
-  `.term stx` `FieldVals` are elaborated while ensuring the type (as given by the constructor's
-  type), `.nested s` `FieldVals` are recursed into. `.missing` `FieldVals` are replaced with
-  metavariables and annotated to indicate that they will get assigned during the default synthesis
-  loop. Note that in this case the same metavariable is used both in the `expr?` field and the
-  final constructed expression (`val`), so that assigning it gives access to the value in both
-  places. The one exception is if an `autoParam` is encountered in the type, in which case the
-  tactic is elaborated. In this case, if `..` is present and we're not in a pattern, we wrap the
-  tactic in one that will try the given tactic and, if it fails, replace the goal with a named
-  field hole.
+  * `.term stx` `FieldVal`s are elaborated while ensuring the type (as given by the constructor's
+    type)
+  * `.nested s` `FieldVal`s are recursed into
+  * `.default` `FieldVal`s are replaced with metavariables and annotated to indicate that they will
+    get assigned during the default synthesis loop. Note that in this case the same metavariable is
+    used both in the `expr?` field and the final constructed expression (`val`), so that assigning
+    it gives access to the value in both places. If an `autoParam` is encountered in the type of a
+    `.default` field, the tactic is elaborated immediately.
 -/
 private partial def elabStruct (s : Struct) (expectedType? : Option Expr) : TermElabM ElabStructResult := withRef s.ref do
   let env ← getEnv
@@ -1165,9 +1162,8 @@ partial def step (struct : Struct) : M Unit :=
   haven't, we call `propagateLoop` again with a higher depth.
 
   If the depth ever exceeds the hierarchy depth, we know that we've searched all nested structures,
-  but no default values were to be found. In this case, we either throw an error with the missing
-  fields, or, if `..` is present, simply return from the loop (at which point the remaining holes
-  will be assigned by `assignRemainingDefaultsToFieldHoles` ).
+  but no default values were to be found. In this case, we throw an error with the missing
+  fields.
 -/
 partial def propagateLoop (hierarchyDepth : Nat) (d : Nat) (struct : Struct) : M Unit := do
   match (← findDefaultMissing? struct) with
