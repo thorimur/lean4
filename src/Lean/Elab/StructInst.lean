@@ -755,7 +755,7 @@ mutual
           | none =>
             if let some val ← s.source.explicit.findSomeM? fun source => mkProjStx? source.stx source.structName fieldName then
               addField (FieldVal.term val)
-            else if s.source.implicit.isSome then
+            else if (← read).inPattern && s.source.implicit.isSome then
               addField (FieldVal.term (mkHole ref))
             else
               addField FieldVal.default
@@ -1090,6 +1090,24 @@ def getFieldValue? (struct : Struct) (fieldName : Name) : Option Expr :=
       none
 
 /--
+  Assign all fields which did not get synthesized during the default loop (but which were marked
+  as such) to appropriately-named field holes with metadata in the case of `..` syntax.
+-/
+def assignRemainingDefaultsToFieldHoles (struct : Struct) : TermElabM Unit :=
+  withRef struct.ref do
+  if struct.source.implicit.isSome then
+    for field in (← allDefaultMissing struct) do
+      match field.expr? with
+      | some expr =>
+        match defaultMissing? expr with
+        | some (.mvar mvarId) =>
+          let type := (← getMVarDecl mvarId).type
+          mvarId.assign (← withRef field.ref <|
+            mkFreshExprMVar type (kind := .syntheticOpaque) (userName := getFieldName field))
+        | _ => unreachable!
+      | none => unreachable!
+
+/--
   A helper function that applies lambdas whose parameters are field names to the corresponding
   field values until it finds a non-lambda, using propagated parameters instead of field names if
   necessary along the way. Returns `none` if it finds a lambda that's not of this form.
@@ -1241,15 +1259,18 @@ partial def propagateLoop (hierarchyDepth : Nat) (d : Nat) (struct : Struct) : M
   | some field =>
     trace[Elab.struct] "propagate [{d}] [field := {field}]: {struct}"
     if d > hierarchyDepth then
-      let missingFields := (← allDefaultMissing struct).map getFieldName
-      let missingFieldsWithoutDefault :=
-        let env := (← getEnv)
-        let structs := (← read).allStructNames
-        missingFields.filter fun fieldName => structs.all fun struct =>
-          (getDefaultFnForField? env struct fieldName).isNone
-      let fieldsToReport :=
-        if missingFieldsWithoutDefault.isEmpty then missingFields else missingFieldsWithoutDefault
-      throwErrorAt field.ref "fields missing: {fieldsToReport.toList.map (s!"'{·}'") |> ", ".intercalate}"
+      if struct.source.implicit.isSome then
+        return ()
+      else
+        let missingFields := (← allDefaultMissing struct).map getFieldName
+        let missingFieldsWithoutDefault :=
+          let env := (← getEnv)
+          let structs := (← read).allStructNames
+          missingFields.filter fun fieldName => structs.all fun struct =>
+            (getDefaultFnForField? env struct fieldName).isNone
+        let fieldsToReport :=
+          if missingFieldsWithoutDefault.isEmpty then missingFields else missingFieldsWithoutDefault
+        throwErrorAt field.ref "fields missing: {fieldsToReport.toList.map (s!"'{·}'") |> ", ".intercalate}"
     else withReader (fun ctx => { ctx with maxDistance := d }) do
       modify fun _ => { progress := false }
       step struct
@@ -1264,10 +1285,12 @@ partial def propagateLoop (hierarchyDepth : Nat) (d : Nat) (struct : Struct) : M
   We call our workhorse function `propagateLoop` with appropriate initial values, which implements
   the loop itself.
 -/
-def propagate (struct : Struct) : TermElabM Unit :=
+def propagate (struct : Struct) : TermElabM Unit := do
   let hierarchyDepth := getHierarchyDepth struct
   let structNames := collectStructNames struct #[]
   propagateLoop hierarchyDepth 0 struct { allStructNames := structNames } |>.run' {}
+  if (! (← read).inPattern) && struct.source.implicit.isSome then
+    assignRemainingDefaultsToFieldHoles struct
 
 end DefaultFields
 
