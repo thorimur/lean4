@@ -17,8 +17,8 @@ import Lean.Elab.Binders
   `val` the field's value. If `x` is a variable, we can abbreviate `x := x` as simply `x`. (We can
   also use `modifyOp`s via `[]` syntax.) A list of structures `s,*` can be given to perform a
   structure update; `..` can be provided to indicate that all unspecified fields should be filled
-  by holes, and is used in patterns; and the type can be specified within the structure instance
-  syntax as well.
+  by named holes outside of patterns, or to match all omitted fields when within patterns; and the
+  type can be specified within the structure instance syntax as well.
 
   ## Overview of code - Short version
 
@@ -65,8 +65,9 @@ import Lean.Elab.Binders
   which organize the raw information for each field. Each `FieldVal` can be a:
 
   * `.term stx` where `stx` is syntax, if a term was provided via syntax
-  * `.default` if the field was omitted—however, if we had encountered `..` in the syntax, we use
-    a `.term` with a syntactic hole for each missing field instead of using a `.default` value
+  * `.default` if the field was omitted—however, if we had encountered `..` in the syntax and we're
+    not in a pattern, we use a `.term` with a syntactic hole for each missing field instead of
+    using a `.default` value
   * `.nested s` where `s` is a `Struct` if the field represents a parent structure, e.g.
     `toFoo`
 
@@ -112,8 +113,12 @@ import Lean.Elab.Binders
   The fact that it "iteratively" synthesizes defaults refers to the fact that sometimes the default
   values of fields reference fields in parent structures which may also need to be synthesized via
   the default value loop (etc.). If we've searched as far as we can and there are still fields that
-  are `isMissingDefault?`, we throw an error with the missing fields.
-
+  are `isMissingDefault?`, we throw an error with the missing fields. Or, if `..` is present, we
+  assign all the fields that haven't yet acquired a value to named synthetic opaque goals for use
+  in e.g. `refine`. (Note that we don't need to check if we're in a pattern. If we were in a
+  pattern and had encountered `..`, all omitted fields would be `.term`s with syntactic holes
+  instead of `.default`s, and so `elabStruct` wouldn't create any metavariables to be picked up by
+  `isMissingDefault?`.)
 -/
 
 namespace Lean.Elab.Term.StructInst
@@ -729,8 +734,9 @@ mutual
     Add `val : FieldVal`s to fields as specified by the sources.
 
     If a value is found in the explicit sources (i.e. prior to `with`), add it as a `.term` or a
-    `.nested` `FieldVal`, as appropriate. If it's missing, check for `..`: if present, make a hole
-    via syntax as a `.term`. In all other cases, mark missing fields as `.default`.
+    `.nested` `FieldVal`, as appropriate. If it's missing, check for `..`: if present and within a
+    pattern, make a hole via syntax as a `.term`. In all other cases, mark missing fields as
+    `.default`.
   -/
   private partial def addMissingFields (s : Struct) : TermElabM Struct := do
     let env ← getEnv
@@ -1251,7 +1257,8 @@ partial def step (struct : Struct) : M Unit :=
 
   If the depth ever exceeds the hierarchy depth, we know that we've searched all nested structures,
   but no default values were to be found. In this case, we throw an error with the missing
-  fields.
+  fields—unless `..` is present, in which case we simply return and allow
+  `assignRemainingDefaultsToFieldHoles` to take over.
 -/
 partial def propagateLoop (hierarchyDepth : Nat) (d : Nat) (struct : Struct) : M Unit := do
   match (← findDefaultMissing? struct) with
