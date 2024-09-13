@@ -1510,7 +1510,7 @@ def withExistingLocalDecls (decls : List LocalDecl) : n α → n α :=
 
 private def withNewMCtxDepthImp (allowLevelAssignments : Bool) (x : MetaM α) : MetaM α := do
   let { mctx := { depth, levelAssignDepth, .. }, postponed, .. } ← get
-  modify fun s => { s with mctx := s.mctx.incDepth allowLevelAssignments, postponed := {} }
+  modify fun s => { s with mctx := s.mctx.freshDepth allowLevelAssignments, postponed := {} }
   try
     x
   finally
