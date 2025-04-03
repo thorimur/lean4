@@ -298,7 +298,7 @@ def buildFileAfterDepArray
 /-! ## Common Builds -/
 
 /--
-A build job for binary file that is expected to already exist (e.g., a data blob).
+A build job for a binary file that is expected to already exist (e.g., a data blob).
 
 Any byte difference in a binary file will trigger a rebuild of its dependents.
 -/
@@ -307,7 +307,7 @@ def inputBinFile (path : FilePath) : SpawnM (Job FilePath) := Job.async do
   return path
 
 /--
-A build job for text file that is expected to already exist (e.g., a source file).
+A build job for a text file that is expected to already exist (e.g., a source file).
 
 Text file traces have normalized line endings to avoid unnecessary rebuilds across platforms.
 -/
@@ -316,7 +316,7 @@ def inputTextFile (path : FilePath) : SpawnM (Job FilePath) := Job.async do
   return path
 
 /--
-A build job for file that is expected to already exist  (e.g., a data blob or source file).
+A build job for a file that is expected to already exist (e.g., a data blob or source file).
 
 If `text := true`, the file is handled as a text file rather than a binary file.
 Any byte difference in a binary file will trigger a rebuild of its dependents.
