@@ -68,6 +68,7 @@ partial def checkMeta (origDecl : Decl) : CompilerM Unit := do
   -- decls with relevant global attrs are public (`Lean.ensureAttrDeclIsMeta`).
   let isPublic := !isPrivateName origDecl.name
   go (irPhases == .comptime) isPublic origDecl |>.run' {}
+-- Note: `isMeta` means meta *only*. Not `.all`.
 where go (isMeta isPublic : Bool) (decl : Decl) : StateT NameSet CompilerM Unit := do
   decl.value.forCodeM fun code =>
     for ref in collectUsedDecls code do
@@ -76,35 +77,44 @@ where go (isMeta isPublic : Bool) (decl : Decl) : StateT NameSet CompilerM Unit 
       modify (·.insert ref)
       let env ← getEnv
       if isMeta && isPublic then
+        -- If it's from the current module, we're totally fine. Weird.
         if let some modIdx := env.getModuleIdxFor? ref then
+          -- The current public meta-only def needs its dependencies to be public and meta. public imported defs can be detected by seeing if it's marked as isExported by any of the imported modules...which would, i.e., export it to the current scope.
           if isMarkedMeta env ref then
             if env.header.modules[modIdx]?.any (!·.isExported) then
               throwError "Invalid public `meta` definition `{.ofConstName origDecl.name}`, \
                 `{.ofConstName ref}` is not accessible here; consider adding \
                 `public import {env.header.moduleNames[modIdx]!}`"
           else
+            -- This case is
             -- TODO: does not account for `public import` + `meta import`, which is not the same
+            -- Huh???? Oh right...eesh. *Shouldn't* this be the same? Eh, maybe not...? That's an m(0,0) + (1,0)?
             if env.header.modules[modIdx]?.any (!·.isExported) then
               throwError "Invalid public `meta` definition `{.ofConstName origDecl.name}`, \
                 `{.ofConstName ref}` is not accessible here; consider adding \
                 `public meta import {env.header.moduleNames[modIdx]!}`"
       match getIRPhases env ref, isMeta with
+      -- Case: `meta`-only def depending on runtime def.
       | .runtime, true =>
         if let some modIdx := env.getModuleIdxFor? ref then
           -- We use `public` here as a conservative default (and most common case) as necessary
-          -- visibility is only clear at the end of the file.
+          -- visibility is only clear at the end of the file. -- huh???
           throwError "Invalid `meta` definition `{.ofConstName origDecl.name}`, \
             `{.ofConstName ref}` is not accessible here; consider adding \
             `public meta import {env.header.moduleNames[modIdx]!}`"
         else
           throwError "Invalid `meta` definition `{.ofConstName origDecl.name}`, \
             `{.ofConstName ref}` not marked `meta`"
+      -- case: non-meta def depending on meta-only def.
       | .comptime, false =>
         if let some modIdx := env.getModuleIdxFor? ref then
+          -- If it's imported, and not marked `meta`, that means it's imported as meta.
+          -- You can fix this.
           if !isMarkedMeta env ref then
             throwError "Invalid definition `{.ofConstName origDecl.name}`, may not access \
               declaration `{.ofConstName ref}` imported as `meta`; consider adding \
               `import {env.header.moduleNames[modIdx]!}`"
+        -- If a local declaration, or if marked meta, we're screwed.
         throwError "Invalid definition `{.ofConstName origDecl.name}`, may not access \
           declaration `{.ofConstName ref}` marked as `meta`"
       | irPhases, _ =>
