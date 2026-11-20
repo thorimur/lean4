@@ -303,19 +303,26 @@ def setShakeAddDownstream (opt : String) (isExported : Bool) : CliM PUnit := do
     {opts with shake.addDownstream? := some { module := mod.toName, isExported }}
 
 /--
-Resolves a `--sandbox` argument: the name of a preset (`bwrap` or `seatbelt`) or the path of a JSON
-file of the form `{"command": [...]}`, where `{stage}` in an element stands for the stage
-directory (see `SandboxConfig.ofTemplate`).
+Resolves a `--sandbox` argument: the name of a preset (`bwrap`, `seatbelt`, `landlock` or
+`landlock-reap`) or the path of a JSON file of the form `{"command": [...]}`, where `{stage}` in an
+element stands for the stage directory (see `SandboxConfig.ofTemplate`).
 -/
 def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
   match spec with
   | "bwrap" => return .bwrap
   | "seatbelt" => return .seatbelt
+  | "landlock" => return .landlock (← runner)
+  | "landlock-reap" => return .landlockReap (← runner)
   | path =>
     let contents ← IO.FS.readFile path
     match Json.parse contents >>= (·.getObjValAs? (Array String) "command") with
     | .ok template => return .ofTemplate template
     | .error e => error s!"invalid sandbox configuration '{path}': {e}"
+where
+  runner : CliM FilePath := do
+    let some lean := (← getThe LakeOptions).leanInstall?
+      | error "the Landlock sandbox requires a detected Lean installation (for `lake-sandbox-run`)"
+    return lean.binDir / "lake-sandbox-run"
 
 def lakeLongOption : (opt : String) → CliM PUnit
 | "--quiet"       => modifyThe LakeOptions ({· with verbosity := .quiet})

@@ -1173,6 +1173,12 @@ if(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   add_custom_target(leanexport ALL DEPENDS leanshared COMMAND $(MAKE) -f ${CMAKE_BINARY_DIR}/stdlib.make leanexport VERBATIM)
 endif()
 
+# Lake's Landlock sandbox runner (`lake build --sandbox=landlock`)
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+  add_executable(lake-sandbox-run lake/sandbox/lake_sandbox_run.c)
+  set_target_properties(lake-sandbox-run PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+
 # use Bash version for building, use Lean version in bin/ for tests & distribution
 configure_file("${LEAN_SOURCE_DIR}/bin/leanc.in" "${CMAKE_BINARY_DIR}/leanc.sh" @ONLY)
 if(STAGE GREATER 0 AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")

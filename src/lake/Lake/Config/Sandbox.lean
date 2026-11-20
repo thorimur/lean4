@@ -54,6 +54,20 @@ public def seatbelt : SandboxConfig where
   command stage := #["sandbox-exec", "-D", "STAGE=" ++ stage.toString, "-p", seatbeltProfile]
 
 /--
+A Linux Landlock sandbox run by `runner` (`lake-sandbox-run`): writes are denied outside the stage
+and `/dev/null`. Processes the sandboxed command starts may outlive it, but they remain confined.
+-/
+public def landlock (runner : FilePath) : SandboxConfig where
+  command stage := #[runner.toString, stage.toString, "--"]
+
+/--
+Like `SandboxConfig.landlock`, but the runner also kills every process the sandboxed command
+started once the command exits, so none outlives it.
+-/
+public def landlockReap (runner : FilePath) : SandboxConfig where
+  command stage := #[runner.toString, "--reap", stage.toString, "--"]
+
+/--
 A sandbox given by a command template, as in a JSON configuration file: each occurrence of
 `{stage}` in an element is replaced with the stage directory.
 -/

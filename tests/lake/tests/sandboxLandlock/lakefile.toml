@@ -1,0 +1,10 @@
+name = "test"
+
+[[lean_lib]]
+name = "A"
+
+[[lean_lib]]
+name = "B"
+
+[[lean_lib]]
+name = "Spawn"
