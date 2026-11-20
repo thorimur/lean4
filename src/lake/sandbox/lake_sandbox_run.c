@@ -63,7 +63,10 @@ available, if DIR cannot be opened, or, with `--reap`, if the runner cannot list
 #define LL_FS_REFER (1ULL << 13)    /* ABI 2 */
 #define LL_FS_TRUNCATE (1ULL << 14) /* ABI 3 */
 
-/* Every right that changes the file system. */
+/*
+Every right that changes the file system. Landlock permits any right a ruleset does not handle, so a
+write right missing here is silently allowed everywhere.
+*/
 #define LL_FS_WRITES                                                                           \
   (LL_FS_WRITE_FILE | LL_FS_REMOVE_DIR | LL_FS_REMOVE_FILE | LL_FS_MAKE_CHAR | LL_FS_MAKE_DIR | \
    LL_FS_MAKE_REG | LL_FS_MAKE_SOCK | LL_FS_MAKE_FIFO | LL_FS_MAKE_BLOCK | LL_FS_MAKE_SYM |     \
@@ -181,6 +184,7 @@ int main(int argc, char **argv) {
   Kill and reap until no children remain. Orphaned descendants are re-parented to this process,
   so each round reaches the next generation. Reaping does not block: a descendant re-parented
   after the listing is alive and unsignalled, so it is killed in the next round instead.
+  Reaping only after `kill_children` returns is what keeps the PIDs it signals from being reused.
   */
   for (;;) {
     kill_children();

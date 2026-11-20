@@ -1177,6 +1177,7 @@ endif()
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
   add_executable(lake-sandbox-run lake/sandbox/lake_sandbox_run.c)
   set_target_properties(lake-sandbox-run PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+  target_compile_options(lake-sandbox-run PRIVATE -Wall -Wextra -Werror)
 endif()
 
 # use Bash version for building, use Lean version in bin/ for tests & distribution
