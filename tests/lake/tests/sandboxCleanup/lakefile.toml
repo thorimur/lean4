@@ -1,0 +1,7 @@
+name = "test"
+
+[[lean_lib]]
+name = "Links"
+
+[[lean_lib]]
+name = "Usurp"

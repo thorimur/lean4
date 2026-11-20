@@ -316,7 +316,10 @@ def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
   | path =>
     let contents ← IO.FS.readFile path
     match Json.parse contents >>= (·.getObjValAs? (Array String) "command") with
-    | .ok template => return .ofTemplate template
+    | .ok template =>
+      if template.isEmpty then
+        error s!"invalid sandbox configuration '{path}': `command` must not be empty"
+      return .ofTemplate template
     | .error e => error s!"invalid sandbox configuration '{path}': {e}"
 where
   runner : CliM FilePath := do

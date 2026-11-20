@@ -12,10 +12,14 @@ import Lake.Util.IO
 
 /-! # Build Stages
 
-A *stage* is a fresh directory that a sandboxed build process may write, and nothing else. Lake
-copies the expected outputs out of the stage afterwards, hashing them in memory, so that a recorded
-hash always describes the bytes the process produced, whatever other processes do to the files
-in place.
+A *stage* is a fresh directory owned by Lake, holding a directory that a sandboxed build process
+may write, and nothing else. Lake copies the expected outputs out of the stage afterwards, hashing
+them in memory, so that a recorded hash always describes the bytes the process produced, whatever
+other processes do to the files in place.
+
+Lake never deletes a stage's contents itself: a process in the same sandbox does (see
+`Stage.cleanup`), so that symbolic links or other tricks of sandboxed code cannot redirect a
+deletion outside the stage.
 
 Build actions (e.g., `compileLeanModule`) declare that their processes run in a stage by using
 `withStage?`. Stages exist only when the build is sandboxed (`BuildConfig.sandbox?`).
@@ -29,10 +33,15 @@ namespace Lake
 public structure Stage where
   /-- The build key of the fetch whose job created the stage. -/
   key : BuildKey
-  /-- The canonical path of the stage directory. -/
+  /-- The stage's own directory, which sandboxed processes cannot modify. -/
+  root : FilePath
+  /-- The directory sandboxed processes may write: `writableDirName` in `root`. -/
   dir : FilePath
 
 namespace Stage
+
+/-- The name of the writable directory in a stage's own directory. -/
+public def writableDirName : String := "w"
 
 /-- The name of the scratch directory in a stage, which sandboxed processes use as `TMPDIR`. -/
 public def tmpDirName : String := "tmp"
@@ -95,6 +104,28 @@ public def finish (stage : Stage) (outputs : Array (String × FilePath)) : JobM 
   for (name, dest) in found do
     stage.install name dest
 
+/--
+Deletes the stage. A process in the stage's sandbox deletes the contents of the writable directory
+with `find -delete`, which follows no symbolic link, not even to the directory itself, and the
+sandbox denies deleting anything outside it. Lake itself then only removes the two directories with
+`rmdir`, which removes nothing but an empty directory. If a step fails, the stage is left in place
+with a warning; Lake never deletes it recursively outside the sandbox.
+-/
+def cleanup (stage : Stage) (cfg : SandboxConfig) : JobM Unit := do
+  if (cfg.command stage.dir).isEmpty then
+    logWarning s!"{stage.key}: stage '{stage.root}' left in place: no sandbox to delete it in"
+    return
+  let find := stage.spawnArgs cfg {
+    cmd := "find", args := #[stage.dir.toString, "-mindepth", "1", "-delete"] }
+  let emptied ← (do return (← IO.Process.output find).exitCode == 0 : IO Bool).catchExceptions
+    fun _ => pure false
+  if emptied then
+    let removed ← (do IO.FS.removeDir stage.dir; IO.FS.removeDir stage.root; return true : IO Bool)
+      |>.catchExceptions fun _ => pure false
+    if removed then
+      return
+  logWarning s!"{stage.key}: stage '{stage.root}' left in place: could not delete it"
+
 end Stage
 
 /--
@@ -104,12 +135,15 @@ otherwise. The stage belongs to the innermost fetch and is deleted once `act` fi
 public def withStage? (act : Option (SandboxConfig × Stage) → JobM α) : JobM α := do
   let some cfg ← getSandbox? | act none
   let key := (← getCallStack).head?.getD default
-  let root ← Stage.rootDir
-  IO.FS.createDirAll root
-  let dir ← Stage.createFreshDir (root / Stage.keyDirName key).toString
-  let dir ← IO.FS.realPath dir
-  IO.FS.createDir (dir / Stage.tmpDirName)
+  let stages ← Stage.rootDir
+  IO.FS.createDirAll stages
+  -- Canonicalized before creating the stage, so the stage's path is exactly the directory created
+  let stages ← IO.FS.realPath stages
+  let root ← Stage.createFreshDir (stages / Stage.keyDirName key).toString
+  let stage := {key, root, dir := root / Stage.writableDirName}
+  IO.FS.createDir stage.dir
+  IO.FS.createDir (stage.dir / Stage.tmpDirName)
   try
-    act (some (cfg, {key, dir}))
+    act (some (cfg, stage))
   finally
-    IO.FS.removeDirAll dir
+    stage.cleanup cfg
