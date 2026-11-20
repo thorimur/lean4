@@ -27,6 +27,7 @@ public import Lake.Build.Module
 public import Lake.Build.ModuleArtifacts
 public import Lake.Build.Package
 public import Lake.Build.Run
+public import Lake.Build.Stage
 public import Lake.Build.Store
 public import Lake.Build.Target
 public import Lake.Build.Targets

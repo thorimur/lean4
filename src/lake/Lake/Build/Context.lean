@@ -8,6 +8,7 @@ module
 prelude
 public import Lake.Config.Cache
 public import Lake.Config.Context
+public import Lake.Config.Sandbox
 public import Lake.Build.Job.Basic
 
 open System
@@ -70,6 +71,11 @@ public structure BuildConfig extends LogConfig where
   trying to fetch mappings.
   -/
   maxRevs : Nat := 100
+  /--
+  The sandbox for the processes of build actions that declare a stage (e.g., `lean`).
+  If `none`, such processes run unconfined and write their outputs in place.
+  -/
+  sandbox? : Option SandboxConfig := none
 
 /--
 Whether the build should show progress information.
@@ -136,6 +142,10 @@ public def getTrustHash [Functor m] [MonadBuild m] : m Bool :=
 @[inline, inherit_doc BuildConfig.noBuild]
 public def getNoBuild [Functor m] [MonadBuild m] : m Bool :=
   (·.noBuild) <$> getBuildConfig
+
+@[inline, inherit_doc BuildConfig.sandbox?]
+public def getSandbox? [Functor m] [MonadBuild m] : m (Option SandboxConfig) :=
+  (·.sandbox?) <$> getBuildConfig
 
 @[inline, inherit_doc BuildConfig.verbosity]
 public def getVerbosity [Functor m] [MonadBuild m] : m Verbosity :=
