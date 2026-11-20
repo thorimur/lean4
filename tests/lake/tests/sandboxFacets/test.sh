@@ -3,13 +3,33 @@ source ../common.sh
 
 # Tests that custom targets and facets get build stages: a target that opts in with `withStage?`,
 # a module facet that calls `compileLeanModule` itself, and one that does so inside a stage of its
-# own, nesting two stages.
+# own, nesting two stages. Also checks that a sandboxed command gets its working directory and
+# environment changes, exactly as it would unsandboxed.
 #
 # Safety: everything this test writes is under its own `work/` directory.
 
 ./clean.sh
 copy_to_work lakefile.lean A.lean B.lean Nested.lean
 OLEAN=.lake/build/lib/lean/A.olean
+mkdir sub
+
+# What `reportEnv` should log: `BAR` is set for Lake but unset for the command
+SUB=$(cd sub && pwd -P)
+EXPECTED_INHERIT=$(printf 'cwd=%s\nFOO=foo-value\nBAR=unset\nHOME=%s' "$SUB" "$HOME")
+EXPECTED_CLEAR=$(printf 'cwd=%s\nFOO=foo-value\nBAR=unset\nHOME=unset' "$SUB")
+report() {
+  if ! BAR=from-lake "$LAKE" build "$@" > report.log 2>&1; then
+    cat report.log
+    return 1
+  fi
+  sed -n 's/.*report //p' report.log
+}
+check_reports() {
+  echo "# TEST: $1: the command gets its working directory and environment"
+  test_exp "$(report envInherit "${@:2}")" = "$EXPECTED_INHERIT"
+  test_exp "$(report envClear "${@:2}")" = "$EXPECTED_CLEAR"
+}
+check_reports unsandboxed
 
 echo "# TEST: unsandboxed, the custom target and facet run unconfined"
 test_run build customTarget
@@ -42,6 +62,7 @@ fi
 
 for SANDBOX in "${SANDBOXES[@]}"; do
   rm -rf .lake escaped.txt
+  check_reports $SANDBOX --sandbox $SANDBOX
 
   echo "# TEST: $SANDBOX: a custom target's process is confined to its own stage"
   test_out "escape denied" build customTarget --sandbox $SANDBOX

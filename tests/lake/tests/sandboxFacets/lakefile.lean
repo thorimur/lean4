@@ -59,3 +59,26 @@ module_facet nestedOlean mod : FilePath := Job.async do
     compile
     outer.finish #[(inStage, dir / "outer.txt")]
   return olean
+
+/--
+Runs `sh`, in a stage if the build is sandboxed, with a working directory, a variable set and a
+variable unset, and logs what `sh` sees of them, one `report` line each.
+-/
+def reportEnv (pkg : Package) (inheritEnv : Bool) : JobM Unit := do
+  let args : IO.Process.SpawnArgs := {
+    cmd := "/bin/sh"
+    args := #["-c", "printf 'cwd=%s\\nFOO=%s\\nBAR=%s\\nHOME=%s\\n' \
+      \"$(pwd -P)\" \"${FOO-unset}\" \"${BAR-unset}\" \"${HOME-unset}\""]
+    cwd := pkg.dir / "sub"
+    env := #[("FOO", "foo-value"), ("BAR", none)]
+    inheritEnv
+  }
+  let out ← withStage? fun
+    | none => IO.Process.output args
+    | some (cfg, stage) => IO.Process.output (stage.spawnArgs cfg args)
+  for line in out.stdout.splitOn "\n" do
+    unless line.isEmpty do
+      logInfo s!"report {line}"
+
+target envInherit pkg : Unit := Job.async do reportEnv pkg true
+target envClear pkg : Unit := Job.async do reportEnv pkg false

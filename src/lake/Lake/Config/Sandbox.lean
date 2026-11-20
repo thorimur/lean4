@@ -26,9 +26,10 @@ public structure SandboxConfig where
   directory `stage` (a canonical path). Configurations that leave the command unchanged are
   treated as unsandboxed.
 
-  The other fields of the `SpawnArgs` (environment, working directory, standard streams) then
-  apply to the sandbox's own process, which must pass them on to the sandboxed command, as all the
-  presets do, or translate them into its own options.
+  The environment (`env`, `inheritEnv`) and working directory (`cwd`) of the given `SpawnArgs`
+  apply inside the sandbox, to the command alone; the sandbox's own program runs with Lake's.
+  Its standard streams and `setsid` apply to the sandbox's program, whose process tree the
+  command joins.
   -/
   wrap : (stage : FilePath) → SpawnArgs → SpawnArgs
 
@@ -37,17 +38,62 @@ public instance : Inhabited SandboxConfig := ⟨{wrap := fun _ args => args}⟩
 namespace SandboxConfig
 
 /--
+The `SpawnArgs` of a sandbox's program `cmd` with arguments `argv`, which runs the command
+`args` describes: Lake's environment and working directory, and the standard streams and session
+of `args`.
+-/
+def sandboxProgram (args : SpawnArgs) (cmd : String) (argv : Array String) : SpawnArgs where
+  cmd
+  args := argv
+  stdin := args.stdin
+  stdout := args.stdout
+  stderr := args.stderr
+  setsid := args.setsid
+
+/-- The final change to each environment variable in `env`, where later entries win. -/
+def envChanges (env : Array (String × Option String)) : Array (String × Option String) :=
+  env.foldl (init := #[]) fun acc (var, val?) => (acc.filter (·.1 != var)).push (var, val?)
+
+/--
+An `env` command line that runs the command `args` describes with its environment and working
+directory. A command whose name contains `=` cannot be run this way, since `env` would take it
+for a variable assignment.
+-/
+def envCommandLine (args : SpawnArgs) : Array String := Id.run do
+  let changes := envChanges args.env
+  let mut argv := #["env"]
+  unless args.inheritEnv do
+    argv := argv.push "-i"
+  for (var, val?) in changes do
+    if val?.isNone then
+      argv := argv ++ #["-u", var]
+  if let some cwd := args.cwd then
+    argv := argv ++ #["-C", cwd.toString]
+  argv := argv.push "--"
+  for (var, val?) in changes do
+    if let some val := val? then
+      argv := argv.push (var ++ "=" ++ val)
+  return argv.push args.cmd ++ args.args
+
+/--
 A `bwrap` sandbox: the file system is read-only except for the stage, and every process the
 sandboxed command starts is killed when it exits.
 -/
 public def bwrap : SandboxConfig where
-  wrap stage args := {args with
-    cmd := "bwrap"
-    args := #[
+  wrap stage args := Id.run do
+    let mut argv := #[
       "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
       "--bind", stage.toString, stage.toString,
-      "--unshare-pid", "--die-with-parent", "--", args.cmd] ++ args.args
-  }
+      "--unshare-pid", "--die-with-parent"]
+    unless args.inheritEnv do
+      argv := argv.push "--clearenv"
+    for (var, val?) in envChanges args.env do
+      match val? with
+      | some val => argv := argv ++ #["--setenv", var, val]
+      | none => argv := argv ++ #["--unsetenv", var]
+    if let some cwd := args.cwd then
+      argv := argv ++ #["--chdir", cwd.toString]
+    return sandboxProgram args "bwrap" (argv ++ #["--", args.cmd] ++ args.args)
 
 /-- The Seatbelt profile of `SandboxConfig.seatbelt`, parameterized by `STAGE`. -/
 def seatbeltProfile : String :=
@@ -58,32 +104,28 @@ def seatbeltProfile : String :=
 /--
 A macOS Seatbelt (`sandbox-exec`) sandbox: writes are denied outside the stage and a few devices.
 Unlike `bwrap`, processes the sandboxed command starts may outlive it, but they remain confined.
+As `sandbox-exec` is protected by System Integrity Protection, `DYLD_*` variables do not reach the
+sandboxed command.
 -/
 public def seatbelt : SandboxConfig where
-  wrap stage args := {args with
-    cmd := "sandbox-exec"
-    args := #["-D", "STAGE=" ++ stage.toString, "-p", seatbeltProfile, args.cmd] ++ args.args
-  }
+  wrap stage args := sandboxProgram args "sandbox-exec" <|
+    #["-D", "STAGE=" ++ stage.toString, "-p", seatbeltProfile] ++ envCommandLine args
 
 /--
 A Linux Landlock sandbox run by `runner` (`lake-sandbox-run`): writes are denied outside the stage
 and `/dev/null`. Processes the sandboxed command starts may outlive it, but they remain confined.
 -/
 public def landlock (runner : FilePath) : SandboxConfig where
-  wrap stage args := {args with
-    cmd := runner.toString
-    args := #[stage.toString, "--", args.cmd] ++ args.args
-  }
+  wrap stage args := sandboxProgram args runner.toString <|
+    #[stage.toString, "--"] ++ envCommandLine args
 
 /--
 Like `SandboxConfig.landlock`, but the runner also kills every process the sandboxed command
 started once the command exits, so none outlives it.
 -/
 public def landlockReap (runner : FilePath) : SandboxConfig where
-  wrap stage args := {args with
-    cmd := runner.toString
-    args := #["--reap", stage.toString, "--", args.cmd] ++ args.args
-  }
+  wrap stage args := sandboxProgram args runner.toString <|
+    #["--reap", stage.toString, "--"] ++ envCommandLine args
 
 /-- The Landlock rights that change the file system, as `setpriv` names them. -/
 def setprivWriteRights : String :=
@@ -95,21 +137,17 @@ Like `SandboxConfig.landlock`, but run by util-linux's `setpriv` (with its Landl
 of Lake's own runner.
 -/
 public def landlockSetpriv : SandboxConfig where
-  wrap stage args := {args with
-    cmd := "setpriv"
-    args := #[
-      "--nnp", "--landlock-access", "fs:" ++ setprivWriteRights,
+  wrap stage args := sandboxProgram args "setpriv" <|
+    #["--nnp", "--landlock-access", "fs:" ++ setprivWriteRights,
       "--landlock-rule", "path-beneath:" ++ setprivWriteRights ++ ":" ++ stage.toString,
-      "--landlock-rule", "path-beneath:write-file,truncate:/dev/null",
-      "--", args.cmd] ++ args.args
-  }
+      "--landlock-rule", "path-beneath:write-file,truncate:/dev/null", "--"] ++ envCommandLine args
 
 /--
 A sandbox given by a command template, as in a JSON configuration file. The template is the
 sandbox's command line: in each element, `{stage}` is replaced by the stage directory, and the
-element `{command}` is replaced by the sandboxed command and its arguments. The template must
-contain `{command}` exactly once, and not as its first element, which names the sandbox's program.
-The sandbox's program must pass its environment and working directory on to the sandboxed command.
+element `{command}` is replaced by an `env` command line that runs the sandboxed command with its
+environment and working directory. The template must contain `{command}` exactly once, and not as
+its first element, which names the sandbox's program.
 -/
 public def ofTemplate (template : Array String) : Except String SandboxConfig := do
   let some program := template[0]?
@@ -125,10 +163,8 @@ public def ofTemplate (template : Array String) : Except String SandboxConfig :=
   return {
     wrap stage args :=
       let fill (elem : String) := elem.replace "{stage}" stage.toString
-      {args with
-        cmd := fill program
-        args := before.map fill ++ #[args.cmd] ++ args.args ++ after.map fill
-      }
+      sandboxProgram args (fill program) <|
+        before.map fill ++ envCommandLine args ++ after.map fill
   }
 
 end SandboxConfig
