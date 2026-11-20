@@ -57,5 +57,24 @@ done
 test_run build +Mod:c +ModEager:c --no-build
 test_exp -z "$(ls -A .lake/build/stage)"
 
+echo "# TEST: a sandbox given by a JSON template"
+if [ "$SANDBOX" = seatbelt ]; then
+  cat > template.json <<'JSON'
+{"command": ["sandbox-exec", "-D", "STAGE={stage}", "-p",
+  "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath (param \"STAGE\")) (literal \"/dev/null\"))",
+  "{command}"]}
+JSON
+else
+  cat > template.json <<'JSON'
+{"command": ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+  "--bind", "{stage}", "{stage}", "--unshare-pid", "--die-with-parent", "--", "{command}"]}
+JSON
+fi
+rm -rf .lake
+test_run build A
+cp $OLEAN A.olean.orig
+test_out "overwrite denied" build B --sandbox template.json
+test_cmd cmp -s $OLEAN A.olean.orig
+
 # Cleanup
 rm -f produced.out

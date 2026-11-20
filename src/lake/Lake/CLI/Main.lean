@@ -304,8 +304,8 @@ def setShakeAddDownstream (opt : String) (isExported : Bool) : CliM PUnit := do
 
 /--
 Resolves a `--sandbox` argument: the name of a preset (`bwrap`, `seatbelt`, `landlock`,
-`landlock-reap` or `landlock-setpriv`) or the path of a JSON file of the form `{"command": [...]}`, where `{stage}` in an
-element stands for the stage directory (see `SandboxConfig.ofTemplate`).
+`landlock-reap` or `landlock-setpriv`) or the path of a JSON file of the form `{"command": [...]}`
+(see `SandboxConfig.ofTemplate`).
 -/
 def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
   match spec with
@@ -318,9 +318,9 @@ def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
     let contents ← IO.FS.readFile path
     match Json.parse contents >>= (·.getObjValAs? (Array String) "command") with
     | .ok template =>
-      if template.isEmpty then
-        error s!"invalid sandbox configuration '{path}': `command` must not be empty"
-      return .ofTemplate template
+      match SandboxConfig.ofTemplate template with
+      | .ok cfg => return cfg
+      | .error e => error s!"invalid sandbox configuration '{path}': {e}"
     | .error e => error s!"invalid sandbox configuration '{path}': {e}"
 where
   runner : CliM FilePath := do

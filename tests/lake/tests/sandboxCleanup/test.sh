@@ -10,9 +10,15 @@ source ../common.sh
 ./clean.sh
 copy_to_work lakefile.toml Links.lean Usurp.lean
 
-echo "# TEST: an empty sandbox command is rejected"
-echo '{"command": []}' > empty.json
-test_err "must not be empty" build Links --sandbox empty.json
+echo "# TEST: invalid sandbox templates are rejected"
+echo '{"command": []}' > template.json
+test_err "must not be empty" build Links --sandbox template.json
+echo '{"command": ["sandbox", "{stage}"]}' > template.json
+test_err "must contain the element" build Links --sandbox template.json
+echo '{"command": ["{command}", "{stage}"]}' > template.json
+test_err "must start with the sandbox's program" build Links --sandbox template.json
+echo '{"command": ["sandbox", "{command}", "{command}"]}' > template.json
+test_err "only once" build Links --sandbox template.json
 
 SANDBOXES=()
 if [ "$UNAME" = Darwin ]; then

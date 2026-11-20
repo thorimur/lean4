@@ -78,10 +78,7 @@ partial def createFreshDir (base : String) (n : Nat := 0) : IO FilePath := do
 /-- Runs `args` in the stage under the sandbox `cfg`. -/
 public def spawnArgs (stage : Stage) (cfg : SandboxConfig) (args : IO.Process.SpawnArgs) :
     IO.Process.SpawnArgs :=
-  let env := args.env.push ("TMPDIR", some (stage.dir / tmpDirName).toString)
-  match (cfg.command stage.dir).toList with
-  | [] => {args with env}
-  | cmd :: pre => {args with cmd, args := pre.toArray.push args.cmd ++ args.args, env}
+  cfg.wrap stage.dir {args with env := args.env.push ("TMPDIR", (stage.dir / tmpDirName).toString)}
 
 /--
 Copies the regular file `name` out of the stage to `dest`, writing its hash, computed from the
@@ -123,13 +120,14 @@ sandbox denies deleting anything outside it. Lake itself then only removes the t
 with a warning; Lake never deletes it recursively outside the sandbox.
 -/
 def cleanup (stage : Stage) (cfg : SandboxConfig) : JobM Unit := do
-  if (cfg.command stage.dir).isEmpty then
+  let find : IO.Process.SpawnArgs :=
+    {cmd := "find", args := #[stage.dir.toString, "-mindepth", "1", "-delete"]}
+  let sandboxedFind := stage.spawnArgs cfg find
+  if sandboxedFind.cmd == find.cmd && sandboxedFind.args == find.args then
     logWarning s!"{stage.owner}: stage '{stage.root}' left in place: no sandbox to delete it in"
     return
-  let find := stage.spawnArgs cfg {
-    cmd := "find", args := #[stage.dir.toString, "-mindepth", "1", "-delete"] }
-  let emptied ← (do return (← IO.Process.output find).exitCode == 0 : IO Bool).catchExceptions
-    fun _ => pure false
+  let emptied ← (do return (← IO.Process.output sandboxedFind).exitCode == 0 : IO Bool)
+    |>.catchExceptions fun _ => pure false
   if emptied then
     let removed ← (do IO.FS.removeDir stage.dir; IO.FS.removeDir stage.root; return true : IO Bool)
       |>.catchExceptions fun _ => pure false
