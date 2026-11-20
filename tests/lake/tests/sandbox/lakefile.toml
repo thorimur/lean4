@@ -1,0 +1,25 @@
+name = "test"
+
+[[lean_lib]]
+name = "A"
+
+[[lean_lib]]
+name = "B"
+
+[[lean_lib]]
+name = "Litter"
+
+# Module-system libraries: `Mod` postpones code generation to `leanir`; `ModEager` does not.
+[[lean_lib]]
+name = "Mod"
+
+[lean_lib.leanOptions]
+experimental.module = true
+compiler.postponeCompile = true
+
+[[lean_lib]]
+name = "ModEager"
+
+[lean_lib.leanOptions]
+experimental.module = true
+compiler.postponeCompile = false

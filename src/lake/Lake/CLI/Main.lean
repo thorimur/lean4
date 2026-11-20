@@ -11,6 +11,7 @@ public import Lake.Load.Config
 public import Lake.CLI.Error
 public import Lake.CLI.Shake
 public import Lake.CLI.Check
+public import Lake.Config.Sandbox
 import Lake.Version
 import Lake.Build.Run
 import Lake.Build.Infos
@@ -80,6 +81,7 @@ public structure LakeOptions where
   toolchain? : Option CacheToolchain := none
   rev? : Option GitRev := none
   maxRevs : Nat := 100
+  sandbox? : Option SandboxConfig := none
   shake : Shake.Args := {}
   comparatorConfig? : Option FilePath := none
   /-- File received via `lake check --from-export` -/
@@ -153,6 +155,7 @@ def LakeOptions.mkBuildConfig
   (outputsPackage? : Option Package := none)
 : BuildConfig where
   maxRevs := opts.maxRevs
+  sandbox? := opts.sandbox?
   oldMode := opts.oldMode
   trustHash := opts.trustHash
   noBuild := opts.noBuild
@@ -299,6 +302,21 @@ def setShakeAddDownstream (opt : String) (isExported : Bool) : CliM PUnit := do
   modifyThe LakeOptions fun opts =>
     {opts with shake.addDownstream? := some { module := mod.toName, isExported }}
 
+/--
+Resolves a `--sandbox` argument: the name of a preset (`bwrap` or `seatbelt`) or the path of a JSON
+file of the form `{"command": [...]}`, where `{stage}` in an element stands for the stage
+directory (see `SandboxConfig.ofTemplate`).
+-/
+def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
+  match spec with
+  | "bwrap" => return .bwrap
+  | "seatbelt" => return .seatbelt
+  | path =>
+    let contents ← IO.FS.readFile path
+    match Json.parse contents >>= (·.getObjValAs? (Array String) "command") with
+    | .ok template => return .ofTemplate template
+    | .error e => error s!"invalid sandbox configuration '{path}': {e}"
+
 def lakeLongOption : (opt : String) → CliM PUnit
 | "--quiet"       => modifyThe LakeOptions ({· with verbosity := .quiet})
 | "--verbose"     => modifyThe LakeOptions ({· with verbosity := .verbose})
@@ -325,6 +343,10 @@ def lakeLongOption : (opt : String) → CliM PUnit
 | "--package" => do
   let pkgName ← takeOptArg "--package" "package name"
   modifyThe LakeOptions ({· with package? := some pkgName})
+| "--sandbox" => do
+  let spec ← takeOptArg "--sandbox" "sandbox (`bwrap`, `seatbelt`, or a JSON file)"
+  let sandbox ← loadSandboxConfig spec
+  modifyThe LakeOptions ({· with sandbox? := some sandbox})
 | "--service" => do
   let service ← takeOptArg "--service" "service name"
   modifyThe LakeOptions ({· with service? := some service})
