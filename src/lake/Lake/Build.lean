@@ -21,6 +21,7 @@ public import Lake.Build.InitFacets
 public import Lake.Build.InputFile
 public import Lake.Build.Job
 public import Lake.Build.Key
+public import Lake.Build.LeanActions
 public import Lake.Build.Library
 public import Lake.Build.Module
 public import Lake.Build.ModuleArtifacts

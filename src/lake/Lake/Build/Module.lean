@@ -13,6 +13,7 @@ import Lean.Elab.ParseImportsFast
 import Lake.Util.Proc
 import Lake.Build.Job.Register
 import Lake.Build.Common
+import Lake.Build.LeanActions
 import Lake.Build.Target
 import Init.Omega
 
