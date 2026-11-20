@@ -67,6 +67,21 @@ started once the command exits, so none outlives it.
 public def landlockReap (runner : FilePath) : SandboxConfig where
   command stage := #[runner.toString, "--reap", stage.toString, "--"]
 
+/-- The Landlock rights that change the file system, as `setpriv` names them. -/
+def setprivWriteRights : String :=
+  "write-file,remove-dir,remove-file,make-char,make-dir,make-reg,make-sock,make-fifo,make-block,\
+  make-sym,refer,truncate"
+
+/--
+Like `SandboxConfig.landlock`, but run by util-linux's `setpriv` (with its Landlock options) instead
+of Lake's own runner.
+-/
+public def landlockSetpriv : SandboxConfig where
+  command stage := #[
+    "setpriv", "--nnp", "--landlock-access", "fs:" ++ setprivWriteRights,
+    "--landlock-rule", "path-beneath:" ++ setprivWriteRights ++ ":" ++ stage.toString,
+    "--landlock-rule", "path-beneath:write-file,truncate:/dev/null", "--"]
+
 /--
 A sandbox given by a command template, as in a JSON configuration file: each occurrence of
 `{stage}` in an element is replaced with the stage directory.

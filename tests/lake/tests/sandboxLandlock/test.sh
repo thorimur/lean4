@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source ../common.sh
 
-# Tests the Landlock sandboxes (`--sandbox=landlock` and `--sandbox=landlock-reap`).
+# Tests the Landlock sandboxes (`--sandbox=landlock`, `landlock-reap` and `landlock-setpriv`).
 #
 # Safety: everything this test writes is under its own `work/` directory. It only probes processes
 # (`kill -0`), except that it kills a leftover `sleep 37.4242` it started itself, after checking
@@ -11,18 +11,25 @@ if [ "$UNAME" != Linux ]; then
   echo "SKIP: Landlock is Linux-only"
   exit 0
 fi
-RUNNER=$(command -v lake-sandbox-run || true)
-if [ -z "$RUNNER" ]; then
-  echo "SKIP: lake-sandbox-run not found"
-  exit 0
-fi
 
 ./clean.sh
 copy_to_work lakefile.toml A.lean B.lean Spawn.lean
 mkdir stage
 
-if ! "$RUNNER" "$PWD/stage" -- true; then
-  echo "SKIP: Landlock (ABI >= 3) is unavailable"
+SANDBOXES=()
+HAVE_RUNNER=
+RUNNER=$(command -v lake-sandbox-run || true)
+if [ -n "$RUNNER" ] && "$RUNNER" "$PWD/stage" -- true; then
+  HAVE_RUNNER=1
+  SANDBOXES+=(landlock landlock-reap)
+fi
+WRITES=write-file,remove-dir,remove-file,make-char,make-dir,make-reg,make-sock,make-fifo
+WRITES=$WRITES,make-block,make-sym,refer,truncate
+if setpriv --nnp --landlock-access "fs:$WRITES" -- true 2>/dev/null; then
+  SANDBOXES+=(landlock-setpriv)
+fi
+if [ ${#SANDBOXES[@]} = 0 ]; then
+  echo "SKIP: neither lake-sandbox-run nor setpriv can use Landlock here"
   exit 0
 fi
 
@@ -43,6 +50,7 @@ kill_survivors() {
 }
 trap kill_survivors EXIT
 
+if [ -n "$HAVE_RUNNER" ]; then
 echo "# TEST: the runner confines writes to its directory"
 test_cmd "$RUNNER" "$PWD/stage" -- sh -c 'echo ok > stage/inside'
 test_exp -f stage/inside
@@ -57,8 +65,9 @@ test_cmd_fails "$RUNNER" "$PWD/missing" -- touch ran
 test_exp ! -f ran
 test_cmd_fails "$RUNNER" --reap "$PWD/missing" -- touch ran
 test_exp ! -f ran
+fi
 
-for SANDBOX in landlock landlock-reap; do
+for SANDBOX in "${SANDBOXES[@]}"; do
   rm -rf .lake
   echo "# TEST: $SANDBOX: another module's output cannot be overwritten"
   test_run build A --sandbox $SANDBOX
@@ -67,6 +76,7 @@ for SANDBOX in landlock landlock-reap; do
   test_cmd cmp -s .lake/build/lib/lean/A.olean A.olean.orig
 done
 
+if [ -n "$HAVE_RUNNER" ]; then
 echo "# TEST: landlock: background processes outlive lean"
 test_out "daemon pid" build Spawn --sandbox landlock
 test_exp -n "$(marked_pid survivor)"
@@ -78,6 +88,7 @@ rm -rf .lake
 test_out "daemon pid" build Spawn --sandbox landlock-reap
 test_exp -z "$(marked_pid survivor)"
 test_exp -z "$(marked_pid daemon)"
+fi
 
 # Cleanup
 rm -f produced.out

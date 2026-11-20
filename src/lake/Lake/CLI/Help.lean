@@ -63,7 +63,7 @@ BASIC OPTIONS:
   --fail-fast           stop scheduling new build jobs after the first required failure
   --sandbox=spec        run `lean` and `leanir` confined to a stage directory
                         (spec: `bwrap`, `seatbelt`, `landlock`, `landlock-reap`,
-                        or a JSON configuration file)
+                        `landlock-setpriv`, or a JSON configuration file)
   --no-cache            build packages locally; do not download build caches
   --try-cache           attempt to download build caches for supported packages
   --json, -J            output JSON-formatted results (in `lake query`,

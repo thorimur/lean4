@@ -24,6 +24,11 @@ elif [ "$UNAME" = Linux ]; then
   if [ -n "$RUNNER" ] && "$RUNNER" "$PWD/probe" -- true; then
     SANDBOXES+=(landlock landlock-reap)
   fi
+  WRITES=write-file,remove-dir,remove-file,make-char,make-dir,make-reg,make-sock,make-fifo
+  WRITES=$WRITES,make-block,make-sym,refer,truncate
+  if setpriv --nnp --landlock-access "fs:$WRITES" -- true 2>/dev/null; then
+    SANDBOXES+=(landlock-setpriv)
+  fi
 fi
 if [ ${#SANDBOXES[@]} = 0 ]; then
   echo "SKIP: no supported sandbox available"

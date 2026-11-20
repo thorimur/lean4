@@ -303,8 +303,8 @@ def setShakeAddDownstream (opt : String) (isExported : Bool) : CliM PUnit := do
     {opts with shake.addDownstream? := some { module := mod.toName, isExported }}
 
 /--
-Resolves a `--sandbox` argument: the name of a preset (`bwrap`, `seatbelt`, `landlock` or
-`landlock-reap`) or the path of a JSON file of the form `{"command": [...]}`, where `{stage}` in an
+Resolves a `--sandbox` argument: the name of a preset (`bwrap`, `seatbelt`, `landlock`,
+`landlock-reap` or `landlock-setpriv`) or the path of a JSON file of the form `{"command": [...]}`, where `{stage}` in an
 element stands for the stage directory (see `SandboxConfig.ofTemplate`).
 -/
 def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
@@ -313,6 +313,7 @@ def loadSandboxConfig (spec : String) : CliM SandboxConfig := do
   | "seatbelt" => return .seatbelt
   | "landlock" => return .landlock (← runner)
   | "landlock-reap" => return .landlockReap (← runner)
+  | "landlock-setpriv" => return .landlockSetpriv
   | path =>
     let contents ← IO.FS.readFile path
     match Json.parse contents >>= (·.getObjValAs? (Array String) "command") with
