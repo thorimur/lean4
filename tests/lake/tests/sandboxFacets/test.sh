@@ -45,7 +45,7 @@ for SANDBOX in "${SANDBOXES[@]}"; do
 
   echo "# TEST: $SANDBOX: a custom target's process is confined to its own stage"
   test_out "escape denied" build customTarget --sandbox $SANDBOX
-  match_text "stage key: test/customTarget" produced.out
+  match_text "stage owner: test/customTarget" produced.out
   test_exp ! -f escaped.txt
   test_exp -f .lake/build/customTarget.txt.hash
   test_exp -z "$(ls -A .lake/build/stage)"
@@ -66,6 +66,11 @@ for SANDBOX in "${SANDBOXES[@]}"; do
   echo "outer stage: $outer"
   echo "lean stage: $inner"
   test_exp -n "$outer" -a -n "$inner"
+  # A stage is named after its key, followed by the key's hash and a counter
+  if ! echo "$outer" | grep -Eq '/test__Nested_nestedOlean-[0-9a-f]{16}-0/w$'; then
+    echo "FAILURE: unexpected stage name: $outer"
+    exit 1
+  fi
   test_exp "${outer%-0/w}" = "${inner%-1/w}" -a "$outer" != "$inner"
   test_exp -f .lake/build/nested/Nested.olean -a -f .lake/build/nested/outer.txt
   test_exp -z "$(ls -A .lake/build/stage)"

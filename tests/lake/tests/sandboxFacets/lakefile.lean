@@ -19,7 +19,7 @@ target customTarget pkg : FilePath := Job.async do
     IO.FS.writeFile installed "unconfined\n"
     return installed
   | some (cfg, stage) => do
-    logInfo s!"stage key: {stage.key}"
+    logInfo s!"stage owner: {stage.owner}"
     -- The name under which the sandboxed process writes the output in the stage
     let inStage := "output.txt"
     let escape := pkg.dir / "escaped.txt"

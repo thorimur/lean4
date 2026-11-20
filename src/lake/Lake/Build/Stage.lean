@@ -31,8 +31,8 @@ namespace Lake
 
 /-- A directory that is the only writable location of the sandboxed processes of one build job. -/
 public structure Stage where
-  /-- The build key of the fetch whose job created the stage. -/
-  key : BuildKey
+  /-- The build key of the fetch whose job created the stage, or `none` outside of any fetch. -/
+  key? : Option BuildKey
   /-- The stage's own directory, which sandboxed processes cannot modify. -/
   root : FilePath
   /-- The directory sandboxed processes may write: `writableDirName` in `root`. -/
@@ -50,9 +50,20 @@ public def tmpDirName : String := "tmp"
 def rootDir : JobM FilePath :=
   return (← getRootPackage).buildDir / "stage"
 
-/-- A file name for `key` that is readable and free of path separators. -/
-def keyDirName (key : BuildKey) : String :=
-  key.toString.map fun c => if c.isAlphanum || c == '.' || c == '-' || c == '_' then c else '_'
+/-- The owner of the stage in names and messages: its build key, or `unkeyed`. -/
+public def owner (stage : Stage) : String :=
+  stage.key?.elim "unkeyed" toString
+
+/--
+The base name of the stages of the build key `key?`: a readable prefix of the key, with characters
+other than ASCII letters, digits, `.`, `-` and `_` replaced by `_`, and the hash of the full key,
+which tells apart keys that look alike in that prefix (also on case-insensitive file systems).
+Stages are unique because they are created exclusively, not because of this name.
+-/
+def baseName (key? : Option BuildKey) : String :=
+  let full := key?.elim "unkeyed" toString
+  let safe := full.map fun c => if c.isAlphanum || c == '.' || c == '-' || c == '_' then c else '_'
+  s!"{(safe.take 64).copy}-{(Hash.ofString full).hex}"
 
 /-- Creates `base-n` for the least `n` for which it does not yet exist, and returns its path. -/
 partial def createFreshDir (base : String) (n : Nat := 0) : IO FilePath := do
@@ -100,7 +111,7 @@ public def finish (stage : Stage) (outputs : Array (String × FilePath)) : JobM 
       if isFile then
         found := found.push (entry.fileName, dest)
         continue
-    error s!"{stage.key}: unexpected entry '{entry.fileName}' in stage '{stage.dir}'"
+    error s!"{stage.owner}: unexpected entry '{entry.fileName}' in stage '{stage.dir}'"
   for (name, dest) in found do
     stage.install name dest
 
@@ -113,7 +124,7 @@ with a warning; Lake never deletes it recursively outside the sandbox.
 -/
 def cleanup (stage : Stage) (cfg : SandboxConfig) : JobM Unit := do
   if (cfg.command stage.dir).isEmpty then
-    logWarning s!"{stage.key}: stage '{stage.root}' left in place: no sandbox to delete it in"
+    logWarning s!"{stage.owner}: stage '{stage.root}' left in place: no sandbox to delete it in"
     return
   let find := stage.spawnArgs cfg {
     cmd := "find", args := #[stage.dir.toString, "-mindepth", "1", "-delete"] }
@@ -124,7 +135,7 @@ def cleanup (stage : Stage) (cfg : SandboxConfig) : JobM Unit := do
       |>.catchExceptions fun _ => pure false
     if removed then
       return
-  logWarning s!"{stage.key}: stage '{stage.root}' left in place: could not delete it"
+  logWarning s!"{stage.owner}: stage '{stage.root}' left in place: could not delete it"
 
 end Stage
 
@@ -134,13 +145,13 @@ otherwise. The stage belongs to the innermost fetch and is deleted once `act` fi
 -/
 public def withStage? (act : Option (SandboxConfig × Stage) → JobM α) : JobM α := do
   let some cfg ← getSandbox? | act none
-  let key := (← getCallStack).head?.getD default
+  let key? := (← getCallStack).head?
   let stages ← Stage.rootDir
   IO.FS.createDirAll stages
   -- Canonicalized before creating the stage, so the stage's path is exactly the directory created
   let stages ← IO.FS.realPath stages
-  let root ← Stage.createFreshDir (stages / Stage.keyDirName key).toString
-  let stage := {key, root, dir := root / Stage.writableDirName}
+  let root ← Stage.createFreshDir (stages / Stage.baseName key?).toString
+  let stage := {key?, root, dir := root / Stage.writableDirName}
   IO.FS.createDir stage.dir
   IO.FS.createDir (stage.dir / Stage.tmpDirName)
   try
